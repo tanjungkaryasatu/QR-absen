@@ -7,15 +7,15 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="E-Absensi QR">
+    <link rel="icon" type="image/png" href="logo_sekolah.png">
     <link id="pwa-manifest-link" rel="manifest" href="">
-    <link id="pwa-apple-icon" rel="apple-touch-icon" href="">
+    <link id="pwa-apple-icon" rel="apple-touch-icon" href="logo_sekolah.png">
     <title>E-Absensi QR Kelas 6</title>
     
     <!-- Google Fonts: Plus Jakarta Sans & Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-	<link rel="icon" type="image/png" href="logo_sekolah.png">
     
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -1092,7 +1092,7 @@
 
         // 0. INJEKSI SINGLE-FILE PWA (MANIFEST + SERVICE WORKER + SCREEN WAKE LOCK)
         function injectSingleFilePwa() {
-            // Generate Ikon SVG resolusi tinggi untuk home screen HP
+            // Ikon cadangan SVG resolusi tinggi jika logo_sekolah.png belum tersedia
             const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
                 <rect width="512" height="512" rx="112" fill="#0f172a"/>
                 <rect x="96" y="96" width="120" height="120" rx="20" fill="none" stroke="#6366f1" stroke-width="28"/>
@@ -1103,47 +1103,59 @@
                 <rect x="132" y="332" width="48" height="48" rx="8" fill="#ffffff"/>
                 <path d="M296 296h48v48h-48zm72 0h48v48h-48zm-72 72h48v48h-48zm72 36h48v12h-48z" fill="#10b981"/>
             </svg>`;
-            const iconDataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgIcon);
+            const fallbackIconUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgIcon);
 
-            const appleIcon = document.getElementById('pwa-apple-icon');
-            if (appleIcon) appleIcon.href = iconDataUrl;
+            // Gunakan logo_sekolah.png jika ada di folder yang sama dengan index.html (aman untuk http/https maupun blob preview)
+            let resolvedSchoolLogoUrl = 'logo_sekolah.png';
+            try {
+                if (window.location.protocol.startsWith('http')) {
+                    resolvedSchoolLogoUrl = new URL('logo_sekolah.png', window.location.href).href;
+                }
+            } catch (e) {
+                resolvedSchoolLogoUrl = 'logo_sekolah.png';
+            }
 
-            // Buat Web App Manifest secara dinamis
-            const manifestObj = {
-                name: 'E-Absensi QR Kelas 6',
-                short_name: 'Absensi QR',
-                description: 'Sistem Absensi Siswa Kelas 6 Berbasis QR Code & Cloud Real-Time',
-                start_url: window.location.href,
-                scope: './',
-                display: 'standalone',
-                orientation: 'portrait-primary',
-                background_color: '#f8fafc',
-                theme_color: '#0f172a',
-                icons: [
-                    {
-                        src: iconDataUrl,
-                        sizes: '512x512',
-                        type: 'image/svg+xml',
-                        purpose: 'any maskable'
-                    }
-                ]
+            const buildAndAttachManifest = (iconHref, iconType) => {
+                const appleIcon = document.getElementById('pwa-apple-icon');
+                if (appleIcon) appleIcon.href = iconHref;
+
+                const manifestObj = {
+                    name: 'E-Absensi QR Kelas 6',
+                    short_name: 'Absensi QR',
+                    description: 'Sistem Absensi Siswa Kelas 6 Berbasis QR Code & Cloud Real-Time',
+                    start_url: window.location.href,
+                    scope: './',
+                    display: 'standalone',
+                    orientation: 'portrait-primary',
+                    background_color: '#f8fafc',
+                    theme_color: '#0f172a',
+                    icons: [
+                        {
+                            src: iconHref,
+                            sizes: '512x512',
+                            type: iconType,
+                            purpose: 'any maskable'
+                        }
+                    ]
+                };
+
+                const manifestBlob = new Blob([JSON.stringify(manifestObj)], { type: 'application/manifest+json' });
+                const manifestUrl = URL.createObjectURL(manifestBlob);
+                const manifestLink = document.getElementById('pwa-manifest-link');
+                if (manifestLink) manifestLink.href = manifestUrl;
             };
 
-            const manifestBlob = new Blob([JSON.stringify(manifestObj)], { type: 'application/manifest+json' });
-            const manifestUrl = URL.createObjectURL(manifestBlob);
-            const manifestLink = document.getElementById('pwa-manifest-link');
-            if (manifestLink) manifestLink.href = manifestUrl;
+            // Cek apakah file logo_sekolah.png tersedia, jika tidak otomatis pakai ikon QR bawaan
+            const probeImg = new Image();
+            probeImg.onload = () => buildAndAttachManifest(resolvedSchoolLogoUrl, 'image/png');
+            probeImg.onerror = () => buildAndAttachManifest(fallbackIconUrl, 'image/svg+xml');
+            probeImg.src = resolvedSchoolLogoUrl;
 
-            // Daftarkan Inline Service Worker agar memenuhi kriteria instalasi PWA
-            if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.hostname === 'localhost')) {
+            // Daftarkan Service Worker ringan berbasis Blob agar memenuhi kriteria instalasi PWA
+            if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
                 const swCode = `
-                    const CACHE_NAME = 'e-absensi-qr-v1';
-                    self.addEventListener('install', (event) => {
-                        self.skipWaiting();
-                    });
-                    self.addEventListener('activate', (event) => {
-                        event.waitUntil(self.clients.claim());
-                    });
+                    self.addEventListener('install', (e) => self.skipWaiting());
+                    self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
                     self.addEventListener('fetch', (event) => {
                         if (event.request.method !== 'GET') return;
                         event.respondWith(
