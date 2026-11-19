@@ -112,6 +112,15 @@
         .animate-scan-card {
             animation: slideUpBounce 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
         }
+
+        /* Animasi Garis Laser Pemindai QR Aktif */
+        @keyframes scanLaserMove {
+            0%, 100% { top: 8%; opacity: 0.4; }
+            50% { top: 88%; opacity: 1; }
+        }
+        .animate-scan-laser {
+            animation: scanLaserMove 2.2s ease-in-out infinite;
+        }
     </style>
 </head>
 <body class="bg-slate-50 text-slate-900 antialiased pb-20 md:pb-8 selection:bg-indigo-600 selection:text-white">
@@ -266,13 +275,23 @@
                                         <canvas id="qr-canvas" class="hidden"></canvas>
                                         <!-- Bingkai Panduan Fokus QR -->
                                         <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
-                                            <div class="w-48 h-48 sm:w-56 sm:h-56 border-2 border-white/80 rounded-2xl shadow-[0_0_0_9999px_rgba(15,23,42,0.45)] relative">
+                                            <div id="scan-reticle-box" class="w-48 h-48 sm:w-56 sm:h-56 border-2 border-white/80 rounded-2xl shadow-[0_0_0_9999px_rgba(15,23,42,0.45)] relative overflow-hidden transition-all duration-200">
                                                 <span class="absolute -top-0.5 -left-0.5 w-6 h-6 border-t-4 border-l-4 border-emerald-400 rounded-tl-xl"></span>
                                                 <span class="absolute -top-0.5 -right-0.5 w-6 h-6 border-t-4 border-r-4 border-emerald-400 rounded-tr-xl"></span>
                                                 <span class="absolute -bottom-0.5 -left-0.5 w-6 h-6 border-b-4 border-l-4 border-emerald-400 rounded-bl-xl"></span>
                                                 <span class="absolute -bottom-0.5 -right-0.5 w-6 h-6 border-b-4 border-r-4 border-emerald-400 rounded-br-xl"></span>
+                                                <!-- Garis Laser Bergerak -->
+                                                <div class="animate-scan-laser absolute inset-x-3 h-0.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_10px_#34d399]"></div>
                                             </div>
                                         </div>
+
+                                        <!-- Overlay Pop-up Konfirmasi Langsung di Atas Layar Kamera -->
+                                        <div id="camera-scan-overlay" class="hidden pointer-events-none absolute inset-0 z-20 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs transition-opacity duration-200">
+                                            <div id="camera-overlay-card" class="animate-scan-card bg-white rounded-2xl p-4 max-w-xs w-full shadow-2xl border-2 border-emerald-500 text-center">
+                                                <!-- Diisi dinamis saat QR terbaca -->
+                                            </div>
+                                        </div>
+
                                         <div class="pointer-events-none absolute bottom-3 inset-x-0 text-center">
                                             <span class="px-3 py-1 rounded-full bg-slate-950/75 text-white text-[11px] font-medium backdrop-blur-xs">
                                                 Arahkan kartu QR siswa ke dalam kotak hijau
@@ -1187,11 +1206,84 @@
                 window.speechSynthesis.cancel();
                 const utter = new SpeechSynthesisUtterance(text);
                 utter.lang = 'id-ID';
-                utter.rate = 1.05;
+                utter.rate = 1.02;
+                utter.volume = 1.0;
                 window.speechSynthesis.speak(utter);
             } catch (e) {
                 // Abaikan jika TTS tidak tersedia
             }
+        }
+
+        // Efek Beep diikuti Jeda singkat lalu Suara Voice + Feedback Visual di Kamera
+        function triggerAudioAndVisualFeedback(type, voiceText, overlayInfo = null) {
+            playBeepSound(type);
+            if (voiceText) {
+                setTimeout(() => {
+                    speakIndonesian(voiceText);
+                }, 320);
+            }
+            if (overlayInfo) {
+                showCameraScanFeedback(overlayInfo);
+            }
+        }
+
+        let overlayHideTimer = null;
+        function showCameraScanFeedback({ statusType, title, subtitle, badgeText, photoUrl }) {
+            const reticle = document.getElementById('scan-reticle-box');
+            const overlay = document.getElementById('camera-scan-overlay');
+            const card = document.getElementById('camera-overlay-card');
+
+            if (reticle) {
+                const flashClass = statusType === 'success'
+                    ? 'border-emerald-400 scale-105'
+                    : statusType === 'warning'
+                        ? 'border-amber-400 scale-105'
+                        : 'border-rose-500 scale-105';
+                reticle.classList.add(...flashClass.split(' '));
+                setTimeout(() => reticle.classList.remove(...flashClass.split(' ')), 600);
+            }
+
+            if (!overlay || !card || !isScannerRunning) return;
+
+            const borderColors = {
+                success: 'border-emerald-500',
+                warning: 'border-amber-500',
+                error: 'border-rose-500'
+            };
+            const badgeColors = {
+                success: 'bg-emerald-100 text-emerald-800',
+                warning: 'bg-amber-100 text-amber-800',
+                error: 'bg-rose-100 text-rose-800'
+            };
+            const iconBg = {
+                success: 'bg-emerald-500 text-white',
+                warning: 'bg-amber-500 text-white',
+                error: 'bg-rose-500 text-white'
+            };
+
+            card.className = `animate-scan-card bg-white rounded-2xl p-4 max-w-xs w-full shadow-2xl border-2 ${borderColors[statusType] || 'border-emerald-500'} text-center`;
+            card.innerHTML = `
+                <div class="relative inline-block mb-2">
+                    ${photoUrl
+                        ? `<img src="${photoUrl}" alt="${title}" class="w-16 h-16 rounded-xl object-cover border-2 border-slate-200 mx-auto">`
+                        : `<div class="w-14 h-14 rounded-xl ${iconBg[statusType]} flex items-center justify-center mx-auto font-bold text-xl">!</div>`
+                    }
+                    <span class="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-full ${iconBg[statusType]} flex items-center justify-center text-xs font-bold shadow">
+                        ${statusType === 'error' ? '✕' : '✓'}
+                    </span>
+                </div>
+                <div class="mt-1">
+                    <span class="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide ${badgeColors[statusType]}">${badgeText}</span>
+                </div>
+                <h4 class="font-bold text-slate-900 text-sm mt-1.5 truncate">${title}</h4>
+                <p class="text-xs text-slate-500 font-medium mt-0.5">${subtitle}</p>
+            `;
+
+            overlay.classList.remove('hidden');
+            if (overlayHideTimer) clearTimeout(overlayHideTimer);
+            overlayHideTimer = setTimeout(() => {
+                overlay.classList.add('hidden');
+            }, 2200);
         }
 
         // 4. KONTROL KAMERA SCANNER NATIVE GETUSERMEDIA + JSQR (TANPA MIRROR AGAR QR AKURAT)
@@ -1246,22 +1338,73 @@
                 }
 
                 const ctx = canvasEl.getContext('2d', { willReadFrequently: true });
+                const mirrorCanvas = document.createElement('canvas');
+                const mirrorCtx = mirrorCanvas.getContext('2d', { willReadFrequently: true });
+                const nativeDetector = ('BarcodeDetector' in window)
+                    ? new window.BarcodeDetector({ formats: ['qr_code'] })
+                    : null;
 
-                const tickScan = () => {
+                let isScanningFrame = false;
+
+                const tickScan = async () => {
                     if (!isScannerRunning) return;
-                    if (videoEl.readyState === videoEl.HAVE_ENOUGH_DATA && videoEl.videoWidth > 0) {
-                        canvasEl.width = videoEl.videoWidth;
-                        canvasEl.height = videoEl.videoHeight;
-                        ctx.drawImage(videoEl, 0, 0, canvasEl.width, canvasEl.height);
+                    if (!isScanningFrame && videoEl.readyState === videoEl.HAVE_ENOUGH_DATA && videoEl.videoWidth > 0) {
+                        isScanningFrame = true;
+                        try {
+                            // Perkecil resolusi pemrosesan agar cepat & ringan di semua HP
+                            const scale = Math.min(1, 640 / videoEl.videoWidth);
+                            const w = Math.floor(videoEl.videoWidth * scale);
+                            const h = Math.floor(videoEl.videoHeight * scale);
 
-                        const imageData = ctx.getImageData(0, 0, canvasEl.width, canvasEl.height);
-                        if (typeof jsQR === 'function') {
-                            const code = jsQR(imageData.data, imageData.width, imageData.height, {
-                                inversionAttempts: "dontInvert"
-                            });
-                            if (code && code.data) {
-                                processScannedQrCode(code.data, false);
+                            canvasEl.width = w;
+                            canvasEl.height = h;
+                            ctx.drawImage(videoEl, 0, 0, w, h);
+
+                            let detectedValue = null;
+
+                            // 1. Coba mesin BarcodeDetector bawaan Chrome (akselerasi hardware, sangat cepat)
+                            if (nativeDetector) {
+                                try {
+                                    const barcodes = await nativeDetector.detect(canvasEl);
+                                    if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+                                        detectedValue = barcodes[0].rawValue;
+                                    }
+                                } catch (e) { /* fallback ke jsQR */ }
                             }
+
+                            // 2. Fallback jsQR orientasi normal
+                            if (!detectedValue && typeof jsQR === 'function') {
+                                const imageData = ctx.getImageData(0, 0, w, h);
+                                const codeNormal = jsQR(imageData.data, w, h, {
+                                    inversionAttempts: "attemptBoth"
+                                });
+                                if (codeNormal && codeNormal.data) {
+                                    detectedValue = codeNormal.data;
+                                } else {
+                                    // 3. Fallback jsQR orientasi un-mirrored (antisipasi kamera depan HP yang auto-mirror)
+                                    mirrorCanvas.width = w;
+                                    mirrorCanvas.height = h;
+                                    mirrorCtx.save();
+                                    mirrorCtx.translate(w, 0);
+                                    mirrorCtx.scale(-1, 1);
+                                    mirrorCtx.drawImage(canvasEl, 0, 0, w, h);
+                                    mirrorCtx.restore();
+
+                                    const mirrorData = mirrorCtx.getImageData(0, 0, w, h);
+                                    const codeMirror = jsQR(mirrorData.data, w, h, {
+                                        inversionAttempts: "attemptBoth"
+                                    });
+                                    if (codeMirror && codeMirror.data) {
+                                        detectedValue = codeMirror.data;
+                                    }
+                                }
+                            }
+
+                            if (detectedValue) {
+                                processScannedQrCode(detectedValue, false);
+                            }
+                        } finally {
+                            isScanningFrame = false;
                         }
                     }
                     scanAnimFrame = requestAnimationFrame(tickScan);
@@ -1337,9 +1480,14 @@
 
             const student = window.appState.students.find(s => s.nisn === cleanCode);
             if (!student) {
-                playBeepSound('error');
                 showToast(`QR Code "${cleanCode}" tidak terdaftar di database Kelas 6!`, 'error');
-                speakIndonesian('Maaf, kartu tidak terdaftar.');
+                triggerAudioAndVisualFeedback('error', 'Maaf, kartu tidak terdaftar.', {
+                    statusType: 'error',
+                    badgeText: 'TIDAK TERDAFTAR',
+                    title: 'Kartu Tidak Dikenal',
+                    subtitle: `Kode: ${cleanCode}`,
+                    photoUrl: ''
+                });
                 return;
             }
 
@@ -1349,10 +1497,15 @@
             );
 
             if (existingLog) {
-                playBeepSound('error');
                 renderLastScanCard(student, existingLog, true);
                 showToast(`${student.name} sudah tercatat ${existingLog.status} pukul ${existingLog.time}.`, 'warning');
-                speakIndonesian(`${student.name}, sudah melakukan absensi hari ini.`);
+                triggerAudioAndVisualFeedback('error', `${student.name}, sudah melakukan absensi hari ini.`, {
+                    statusType: 'warning',
+                    badgeText: `SUDAH ABSEN (${existingLog.status})`,
+                    title: student.name,
+                    subtitle: `Tercatat pukul ${existingLog.time} WIB`,
+                    photoUrl: student.photo || getDefaultAvatar(student.name, student.gender)
+                });
                 return;
             }
 
@@ -1387,15 +1540,28 @@
             };
 
             await window.cloudSaveAttendance(attendanceRecord);
-            playBeepSound('success');
             renderLastScanCard(student, attendanceRecord, false);
+
+            const studentPhoto = student.photo || getDefaultAvatar(student.name, student.gender);
 
             if (status === 'Hadir') {
                 showToast(`${student.name} tercatat HADIR pukul ${timeStr} WIB`, 'success');
-                speakIndonesian(`Selamat pagi, ${student.name}.`);
+                triggerAudioAndVisualFeedback('success', `Terima kasih, ${student.name}. Hadir tepat waktu.`, {
+                    statusType: 'success',
+                    badgeText: 'BERHASIL • HADIR',
+                    title: student.name,
+                    subtitle: `Masuk pukul ${timeStr} WIB`,
+                    photoUrl: studentPhoto
+                });
             } else {
                 showToast(`${student.name} tercatat TERLAMBAT ${lateMinutes} menit (${timeStr} WIB)`, 'warning');
-                speakIndonesian(`${student.name}, tercatat terlambat.`);
+                triggerAudioAndVisualFeedback('success', `Terima kasih, ${student.name}. Tercatat terlambat.`, {
+                    statusType: 'warning',
+                    badgeText: `TERLAMBAT (+${lateMinutes} MENIT)`,
+                    title: student.name,
+                    subtitle: `Masuk pukul ${timeStr} WIB`,
+                    photoUrl: studentPhoto
+                });
             }
         }
 
