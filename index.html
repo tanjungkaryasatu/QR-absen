@@ -37,8 +37,8 @@
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     
-    <!-- HTML5-QRCode untuk Kamera Scanner HP -->
-    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <!-- jsQR Decoder Murni (Tampil langsung di elemen <video> native tanpa layar hitam) -->
+    <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
     
     <!-- SheetJS (XLSX) untuk Ekspor & Impor Excel -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
@@ -52,60 +52,27 @@
             -webkit-tap-highlight-color: transparent;
         }
 
-        /* Styling khusus area kamera HTML5-QRCode */
-        #qr-reader {
-            border: none !important;
-            border-radius: 0.75rem;
-            overflow: hidden;
-            background: transparent !important;
-            width: 100% !important;
-        }
-        #qr-reader video {
-            border-radius: 0.75rem;
-            width: 100% !important;
-            height: auto !important;
-            min-height: 260px;
+        /* Styling khusus elemen <video> kamera native */
+        #camera-video {
+            width: 100%;
+            height: 100%;
+            min-height: 280px;
             max-height: 420px;
-            object-fit: cover !important;
-            display: block !important;
+            object-fit: cover;
+            display: block;
+            background: #0f172a;
         }
-        #qr-reader.mirror-front video {
+        #camera-video.mirror-front {
             transform: scaleX(-1);
         }
-        #qr-reader__scan_region {
-            min-height: 260px !important;
-            display: flex !important;
-            align-items: center;
-            justify-content: center;
-            background: transparent !important;
+
+        /* Animasi garis laser pemindai */
+        @keyframes scanLaser {
+            0%, 100% { top: 12%; opacity: 0.45; }
+            50% { top: 88%; opacity: 1; }
         }
-        #qr-reader__scan_region img {
-            display: none !important;
-        }
-        #qr-reader__dashboard_section_csr span,
-        #qr-reader__dashboard_section_swaplink {
-            display: none !important;
-        }
-        #qr-reader__camera_selection {
-            padding: 6px 10px;
-            border-radius: 0.5rem;
-            border: 1px solid #cbd5e1;
-            font-size: 0.8125rem;
-            margin-bottom: 8px;
-            background: white;
-            color: #0f172a;
-            max-width: 90%;
-        }
-        #qr-reader__dashboard_section_csr button {
-            background-color: #1e293b !important;
-            color: white !important;
-            padding: 8px 16px !important;
-            border-radius: 0.5rem !important;
-            font-weight: 600 !important;
-            font-size: 0.8125rem !important;
-            border: 1px solid #334155 !important;
-            margin: 6px !important;
-            cursor: pointer;
+        .scan-laser-line {
+            animation: scanLaser 2.2s ease-in-out infinite;
         }
 
         /* Custom Scrollbar */
@@ -299,8 +266,24 @@
                                 </div>
 
                                 <!-- Box Kamera -->
-                                <div class="relative rounded-xl overflow-hidden bg-slate-900 min-h-[260px] flex flex-col items-center justify-center border border-slate-800">
-                                    <div id="qr-reader" class="w-full"></div>
+                                <div class="relative rounded-xl overflow-hidden bg-slate-900 min-h-[280px] flex flex-col items-center justify-center border border-slate-800">
+                                    
+                                    <!-- Stream Video Kamera Native -->
+                                    <div id="camera-active-wrapper" class="hidden relative w-full h-full flex items-center justify-center bg-slate-950">
+                                        <video id="camera-video" autoplay playsinline muted class="mirror-front"></video>
+                                        <canvas id="camera-canvas" class="hidden"></canvas>
+
+                                        <!-- Bingkai Fokus QR Overlay -->
+                                        <div class="pointer-events-none absolute inset-0 flex items-center justify-center">
+                                            <div class="relative w-52 h-52 sm:w-60 sm:h-60">
+                                                <span class="absolute top-0 left-0 w-7 h-7 border-t-4 border-l-4 border-white rounded-tl-md"></span>
+                                                <span class="absolute top-0 right-0 w-7 h-7 border-t-4 border-r-4 border-white rounded-tr-md"></span>
+                                                <span class="absolute bottom-0 left-0 w-7 h-7 border-b-4 border-l-4 border-white rounded-bl-md"></span>
+                                                <span class="absolute bottom-0 right-0 w-7 h-7 border-b-4 border-r-4 border-white rounded-br-md"></span>
+                                                <div class="scan-laser-line absolute inset-x-3 h-0.5 bg-emerald-400 shadow-[0_0_8px_#34d399]"></div>
+                                            </div>
+                                        </div>
+                                    </div>
                                     
                                     <!-- Placeholder saat kamera belum menyala -->
                                     <div id="camera-placeholder" class="p-6 text-center text-slate-300 flex flex-col items-center">
@@ -828,7 +811,6 @@
   messagingSenderId: "979987493158",
   appId: "1:979987493158:web:f84d1b304ddb5d006111e7"
 };
-
         const firebaseConfig = USER_FIREBASE_CONFIG || (typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null);
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'absensi-qr-kelas6-default';
 
@@ -1068,9 +1050,10 @@
     <!-- SCRIPT UTAMA UI, SCANNER, EXCEL, ZIP & KARTU QR           -->
     <!-- ========================================================= -->
     <script>
-        let html5QrCode = null;
+        let activeMediaStream = null;
+        let scanLoopRafId = null;
         let isScannerRunning = false;
-        let currentFacingMode = "user"; // Default kamera depan ("user") untuk mode kiosk kelas
+        let currentFacingMode = "user"; // Default kamera depan ("user") untuk mode kiosk kelas & webcam laptop
 
         // 1. JAM DIGITAL & INISIALISASI TANGGAL
         function getTodayDateStr() {
@@ -1169,54 +1152,11 @@
             lucide.createIcons();
         }
 
-        // 3. EFEK SUARA BIP & TEXT-TO-SPEECH BAHASA INDONESIA
-        function playBeepSound(type = 'success') {
-            try {
-                const AudioCtx = window.AudioContext || window.webkitAudioContext;
-                const ctx = new AudioCtx();
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.connect(gain);
-                gain.connect(ctx.destination);
-
-                if (type === 'success') {
-                    osc.type = 'sine';
-                    osc.frequency.setValueAtTime(880, ctx.currentTime);
-                    osc.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.08);
-                    gain.gain.setValueAtTime(0.2, ctx.currentTime);
-                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
-                    osc.start();
-                    osc.stop(ctx.currentTime + 0.25);
-                } else {
-                    osc.type = 'triangle';
-                    osc.frequency.setValueAtTime(300, ctx.currentTime);
-                    gain.gain.setValueAtTime(0.25, ctx.currentTime);
-                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-                    osc.start();
-                    osc.stop(ctx.currentTime + 0.3);
-                }
-            } catch (e) {
-                // Abaikan jika browser memblokir audio otomatis
-            }
-        }
-
-        function speakIndonesian(text) {
-            if (window.appState.settings.voiceEnabled === false) return;
-            if (!('speechSynthesis' in window)) return;
-            try {
-                window.speechSynthesis.cancel();
-                const utter = new SpeechSynthesisUtterance(text);
-                utter.lang = 'id-ID';
-                utter.rate = 1.05;
-                window.speechSynthesis.speak(utter);
-            } catch (e) {
-                // Abaikan jika TTS tidak didukung perangkat
-            }
-        }
-
-        // 4. KONTROL KAMERA SCANNER HTML5-QRCODE
+        // 4. KONTROL KAMERA SCANNER NATIVE GETUSERMEDIA + JSQR
         async function startScanner(preferredFacing = currentFacingMode) {
-            const readerEl = document.getElementById('qr-reader');
+            const wrapper = document.getElementById('camera-active-wrapper');
+            const videoEl = document.getElementById('camera-video');
+            const canvasEl = document.getElementById('camera-canvas');
             const placeholder = document.getElementById('camera-placeholder');
             const btnText = document.getElementById('btn-camera-text');
             const btnSwitch = document.getElementById('btn-switch-camera');
@@ -1226,95 +1166,138 @@
                 await stopScanner(true);
             }
 
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showToast('Browser tidak mendukung akses kamera langsung. Gunakan Chrome/Edge terbaru.', 'error');
+                return;
+            }
+
             try {
-                // Pastikan instance lama dibersihkan total agar stream video tidak blank saat restart
-                if (html5QrCode) {
-                    try { html5QrCode.clear(); } catch (e) {}
+                let stream = null;
+
+                // Tahap 1: Coba kamera depan ("user") atau belakang sesuai pilihan
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            facingMode: { ideal: preferredFacing },
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        },
+                        audio: false
+                    });
+                    currentFacingMode = preferredFacing;
+                } catch (e1) {
+                    // Tahap 2: Fallback universal tanpa constraint (paling ampuh di webcam laptop Windows/Mac)
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: true,
+                        audio: false
+                    });
+                    currentFacingMode = 'user';
                 }
-                html5QrCode = new Html5Qrcode("qr-reader", { verbose: false });
+
+                activeMediaStream = stream;
+                videoEl.srcObject = stream;
+                videoEl.setAttribute('playsinline', 'true');
+                videoEl.muted = true;
+
+                // Tunggu metadata & frame video benar-benar siap sebelum diputar
+                await new Promise((resolve) => {
+                    if (videoEl.readyState >= 2) return resolve();
+                    videoEl.onloadedmetadata = () => resolve();
+                    setTimeout(resolve, 1200);
+                });
+                await videoEl.play();
+
+                if (currentFacingMode === 'user') videoEl.classList.add('mirror-front');
+                else videoEl.classList.remove('mirror-front');
 
                 if (placeholder) placeholder.classList.add('hidden');
+                if (wrapper) wrapper.classList.remove('hidden');
                 if (btnText) btnText.textContent = 'Matikan Kamera';
 
-                const scanConfig = {
-                    fps: 12,
-                    qrbox: function(viewfinderWidth, viewfinderHeight) {
-                        const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-                        const boxSize = Math.max(160, Math.floor(minEdge * 0.68));
-                        return { width: boxSize, height: boxSize };
-                    },
-                    aspectRatio: 1.333334
-                };
-
-                const onScanSuccess = (decodedText) => {
-                    processScannedQrCode(decodedText, false);
-                };
-
-                // Coba buka kamera sesuai mode pilihan (default depan), fallback otomatis ke kamera tersedia
-                try {
-                    await html5QrCode.start(
-                        { facingMode: preferredFacing },
-                        scanConfig,
-                        onScanSuccess,
-                        () => {}
-                    );
-                    currentFacingMode = preferredFacing;
-                } catch (firstErr) {
-                    const cameras = await Html5Qrcode.getCameras();
-                    if (cameras && cameras.length > 0) {
-                        const frontCam = cameras.find(c => /front|depan|user|facetime/i.test(c.label));
-                        const chosenId = (preferredFacing === 'user' && frontCam) ? frontCam.id : cameras[0].id;
-                        await html5QrCode.start(
-                            chosenId,
-                            scanConfig,
-                            onScanSuccess,
-                            () => {}
-                        );
-                    } else {
-                        throw firstErr;
-                    }
-                }
-
-                // Efek cermin alami khusus kamera depan & atribut playsinline wajib browser HP
-                if (readerEl) {
-                    if (currentFacingMode === 'user') readerEl.classList.add('mirror-front');
-                    else readerEl.classList.remove('mirror-front');
-                }
-                const videoEl = document.querySelector('#qr-reader video');
-                if (videoEl) {
-                    videoEl.setAttribute('playsinline', 'true');
-                    videoEl.setAttribute('muted', 'true');
-                    videoEl.play().catch(() => {});
-                }
-
                 isScannerRunning = true;
-                if (btnSwitch) btnSwitch.classList.remove('hidden');
+
+                // Cek apakah perangkat punya lebih dari 1 kamera (HP punya depan & belakang)
+                try {
+                    const devices = await navigator.mediaDevices.enumerateDevices();
+                    const videoInputs = devices.filter(d => d.kind === 'videoinput');
+                    if (btnSwitch) {
+                        if (videoInputs.length > 1) btnSwitch.classList.remove('hidden');
+                        else btnSwitch.classList.add('hidden');
+                    }
+                } catch (e) {}
+
                 if (btnFacingLabel) {
                     btnFacingLabel.textContent = currentFacingMode === 'user' ? 'Pindah Belakang' : 'Pindah Depan';
                 }
+
+                // Loop pembacaan QR Code dari frame video setiap ~120ms
+                const ctx = canvasEl.getContext('2d', { willReadFrequently: true });
+                let lastDecodeTick = 0;
+
+                const tickScan = (nowTs) => {
+                    if (!isScannerRunning) return;
+
+                    if (nowTs - lastDecodeTick >= 120 && videoEl.readyState === videoEl.HAVE_ENOUGH_DATA) {
+                        lastDecodeTick = nowTs;
+                        const vw = videoEl.videoWidth;
+                        const vh = videoEl.videoHeight;
+
+                        if (vw > 0 && vh > 0 && typeof jsQR !== 'undefined') {
+                            canvasEl.width = vw;
+                            canvasEl.height = vh;
+                            ctx.drawImage(videoEl, 0, 0, vw, vh);
+                            const imgData = ctx.getImageData(0, 0, vw, vh);
+                            const code = jsQR(imgData.data, imgData.width, imgData.height, {
+                                inversionAttempts: "dontInvert"
+                            });
+
+                            if (code && code.data) {
+                                processScannedQrCode(code.data, false);
+                            }
+                        }
+                    }
+                    scanLoopRafId = requestAnimationFrame(tickScan);
+                };
+
+                scanLoopRafId = requestAnimationFrame(tickScan);
             } catch (err) {
                 console.error("Gagal membuka kamera:", err);
                 isScannerRunning = false;
+                if (wrapper) wrapper.classList.add('hidden');
                 if (placeholder) placeholder.classList.remove('hidden');
                 if (btnText) btnText.textContent = 'Aktifkan Kamera';
                 if (btnSwitch) btnSwitch.classList.add('hidden');
-                showToast('Kamera tidak merespons. Pastikan tidak sedang dipakai aplikasi lain & izin kamera aktif.', 'error');
+
+                let msg = 'Gagal mengakses kamera. Pastikan izin kamera di browser sudah diizinkan (Allow).';
+                if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+                    msg = 'Kamera sedang digunakan aplikasi lain (Zoom/Meet/Kamera Windows). Tutup dulu lalu coba lagi.';
+                } else if (err.name === 'NotAllowedError') {
+                    msg = 'Izin kamera diblokir browser. Klik ikon gembok di bilah alamat lalu izinkan Kamera.';
+                }
+                showToast(msg, 'error');
             }
         }
 
         async function stopScanner(keepPlaceholderHidden = false) {
+            const wrapper = document.getElementById('camera-active-wrapper');
+            const videoEl = document.getElementById('camera-video');
             const placeholder = document.getElementById('camera-placeholder');
             const btnText = document.getElementById('btn-camera-text');
             const btnSwitch = document.getElementById('btn-switch-camera');
-            if (html5QrCode && isScannerRunning) {
-                try {
-                    await html5QrCode.stop();
-                    html5QrCode.clear();
-                } catch (e) {
-                    console.warn(e);
-                }
-            }
+
             isScannerRunning = false;
+            if (scanLoopRafId) {
+                cancelAnimationFrame(scanLoopRafId);
+                scanLoopRafId = null;
+            }
+            if (activeMediaStream) {
+                activeMediaStream.getTracks().forEach(track => track.stop());
+                activeMediaStream = null;
+            }
+            if (videoEl) {
+                videoEl.srcObject = null;
+            }
+            if (wrapper) wrapper.classList.add('hidden');
             if (!keepPlaceholderHidden && placeholder) placeholder.classList.remove('hidden');
             if (btnText) btnText.textContent = 'Aktifkan Kamera';
             if (btnSwitch) btnSwitch.classList.add('hidden');
