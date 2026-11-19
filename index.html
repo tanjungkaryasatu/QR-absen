@@ -3,6 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#0f172a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="E-Absensi QR">
+    <link id="pwa-manifest-link" rel="manifest" href="">
+    <link id="pwa-apple-icon" rel="apple-touch-icon" href="">
     <title>E-Absensi QR Kelas 6</title>
     
     <!-- Google Fonts: Plus Jakarta Sans & Inter -->
@@ -204,6 +210,11 @@
                         <span id="sync-dot-mobile" class="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse"></span>
                         <span id="sync-status-mobile" class="text-slate-600 text-[11px]">Sinkron</span>
                     </div>
+                    <!-- Tombol Install PWA (Muncul otomatis jika browser mendukung instalasi) -->
+                    <button id="btn-install-pwa-header" onclick="triggerPwaInstall()" class="hidden px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-700 text-white text-[11px] font-semibold transition flex items-center gap-1 shadow-xs">
+                        <i data-lucide="smartphone" class="w-3 h-3"></i>
+                        <span>Pasang App</span>
+                    </button>
                     <!-- Live Digital Clock -->
                     <div class="flex items-center gap-2.5 px-3 py-1 rounded-md bg-slate-900 text-white">
                         <div id="live-clock" class="text-xs font-bold tabular-nums tracking-wide">06:30:00</div>
@@ -624,10 +635,16 @@
                             </div>
 
                             <div class="pt-3 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
-                                <button type="submit" class="px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs transition flex items-center gap-2">
-                                    <i data-lucide="save" class="w-3.5 h-3.5"></i>
-                                    Simpan Pengaturan
-                                </button>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <button type="submit" class="px-5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs transition flex items-center gap-2">
+                                        <i data-lucide="save" class="w-3.5 h-3.5"></i>
+                                        Simpan Pengaturan
+                                    </button>
+                                    <button type="button" id="btn-install-pwa-settings" onclick="triggerPwaInstall()" class="px-3.5 py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs transition flex items-center gap-1.5">
+                                        <i data-lucide="download" class="w-3.5 h-3.5"></i>
+                                        Instal Aplikasi ke HP (PWA)
+                                    </button>
+                                </div>
                                 <button type="button" onclick="openResetSystemModal()" class="px-3.5 py-2 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-semibold text-xs transition flex items-center gap-1.5">
                                     <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i>
                                     Reset Sistem (Tahun Ajaran Baru)
@@ -1069,6 +1086,130 @@
         let scanAnimFrame = null;
         let isScannerRunning = false;
         let currentFacingMode = "user"; // Default kamera depan ("user") untuk mode kiosk kelas
+        let wakeLockSentinel = null;
+        let deferredPwaPrompt = null;
+
+        // 0. INJEKSI SINGLE-FILE PWA (MANIFEST + SERVICE WORKER + SCREEN WAKE LOCK)
+        function injectSingleFilePwa() {
+            // Generate Ikon SVG resolusi tinggi untuk home screen HP
+            const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+                <rect width="512" height="512" rx="112" fill="#0f172a"/>
+                <rect x="96" y="96" width="120" height="120" rx="20" fill="none" stroke="#6366f1" stroke-width="28"/>
+                <rect x="132" y="132" width="48" height="48" rx="8" fill="#ffffff"/>
+                <rect x="296" y="96" width="120" height="120" rx="20" fill="none" stroke="#6366f1" stroke-width="28"/>
+                <rect x="332" y="132" width="48" height="48" rx="8" fill="#ffffff"/>
+                <rect x="96" y="296" width="120" height="120" rx="20" fill="none" stroke="#6366f1" stroke-width="28"/>
+                <rect x="132" y="332" width="48" height="48" rx="8" fill="#ffffff"/>
+                <path d="M296 296h48v48h-48zm72 0h48v48h-48zm-72 72h48v48h-48zm72 36h48v12h-48z" fill="#10b981"/>
+            </svg>`;
+            const iconDataUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgIcon);
+
+            const appleIcon = document.getElementById('pwa-apple-icon');
+            if (appleIcon) appleIcon.href = iconDataUrl;
+
+            // Buat Web App Manifest secara dinamis
+            const manifestObj = {
+                name: 'E-Absensi QR Kelas 6',
+                short_name: 'Absensi QR',
+                description: 'Sistem Absensi Siswa Kelas 6 Berbasis QR Code & Cloud Real-Time',
+                start_url: window.location.href,
+                scope: './',
+                display: 'standalone',
+                orientation: 'portrait-primary',
+                background_color: '#f8fafc',
+                theme_color: '#0f172a',
+                icons: [
+                    {
+                        src: iconDataUrl,
+                        sizes: '512x512',
+                        type: 'image/svg+xml',
+                        purpose: 'any maskable'
+                    }
+                ]
+            };
+
+            const manifestBlob = new Blob([JSON.stringify(manifestObj)], { type: 'application/manifest+json' });
+            const manifestUrl = URL.createObjectURL(manifestBlob);
+            const manifestLink = document.getElementById('pwa-manifest-link');
+            if (manifestLink) manifestLink.href = manifestUrl;
+
+            // Daftarkan Inline Service Worker agar memenuhi kriteria instalasi PWA
+            if ('serviceWorker' in navigator && (window.location.protocol === 'https:' || window.location.hostname === 'localhost')) {
+                const swCode = `
+                    const CACHE_NAME = 'e-absensi-qr-v1';
+                    self.addEventListener('install', (event) => {
+                        self.skipWaiting();
+                    });
+                    self.addEventListener('activate', (event) => {
+                        event.waitUntil(self.clients.claim());
+                    });
+                    self.addEventListener('fetch', (event) => {
+                        if (event.request.method !== 'GET') return;
+                        event.respondWith(
+                            fetch(event.request).catch(() => caches.match(event.request))
+                        );
+                    });
+                `;
+                try {
+                    const swBlob = new Blob([swCode], { type: 'application/javascript' });
+                    const swUrl = URL.createObjectURL(swBlob);
+                    navigator.serviceWorker.register(swUrl).catch(() => {});
+                } catch (e) {
+                    // Abaikan jika browser sandbox membatasi Blob SW
+                }
+            }
+
+            // Tangkap event instalasi PWA dari Chrome / Edge Android
+            window.addEventListener('beforeinstallprompt', (e) => {
+                e.preventDefault();
+                deferredPwaPrompt = e;
+                const btnHeader = document.getElementById('btn-install-pwa-header');
+                if (btnHeader) btnHeader.classList.remove('hidden');
+            });
+
+            window.addEventListener('appinstalled', () => {
+                deferredPwaPrompt = null;
+                const btnHeader = document.getElementById('btn-install-pwa-header');
+                if (btnHeader) btnHeader.classList.add('hidden');
+                showToast('Aplikasi E-Absensi QR berhasil dipasang di layar utama!', 'success');
+            });
+        }
+
+        async function triggerPwaInstall() {
+            if (deferredPwaPrompt) {
+                deferredPwaPrompt.prompt();
+                const { outcome } = await deferredPwaPrompt.userChoice;
+                if (outcome === 'accepted') {
+                    deferredPwaPrompt = null;
+                }
+            } else {
+                // Panduan manual untuk iOS Safari atau browser yang sudah menginstal
+                const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+                if (isIos) {
+                    showToast('Di Safari iPhone/iPad: Ketuk ikon Bagikan (Share) di bawah lalu pilih "Tambahkan ke Layar Utama".', 'warning');
+                } else {
+                    showToast('Ketuk menu titik tiga (⋮) di pojok kanan atas browser lalu pilih "Tambahkan ke Layar Utama" / "Instal Aplikasi".', 'warning');
+                }
+            }
+        }
+
+        async function requestScreenWakeLock() {
+            try {
+                if ('wakeLock' in navigator && !wakeLockSentinel) {
+                    wakeLockSentinel = await navigator.wakeLock.request('screen');
+                    wakeLockSentinel.addEventListener('release', () => {
+                        wakeLockSentinel = null;
+                    });
+                }
+            } catch (e) { /* Abaikan jika perangkat tidak mengizinkan */ }
+        }
+
+        function releaseScreenWakeLock() {
+            if (wakeLockSentinel) {
+                wakeLockSentinel.release().catch(() => {});
+                wakeLockSentinel = null;
+            }
+        }
 
         // 1. JAM DIGITAL & INISIALISASI TANGGAL
         function getTodayDateStr() {
@@ -1336,6 +1477,7 @@
                 if (btnFacingLabel) {
                     btnFacingLabel.textContent = currentFacingMode === 'user' ? 'Pindah Belakang' : 'Pindah Depan';
                 }
+                requestScreenWakeLock();
 
                 const ctx = canvasEl.getContext('2d', { willReadFrequently: true });
                 const mirrorCanvas = document.createElement('canvas');
@@ -1442,6 +1584,7 @@
             }
 
             isScannerRunning = false;
+            releaseScreenWakeLock();
             if (wrapperEl) wrapperEl.classList.add('hidden');
             if (!keepPlaceholderHidden && placeholder) placeholder.classList.remove('hidden');
             if (btnText) btnText.textContent = 'Aktifkan Kamera';
@@ -2516,6 +2659,7 @@
 
         // Jalankan saat halaman selesai dimuat
         window.addEventListener('DOMContentLoaded', () => {
+            injectSingleFilePwa();
             initClockAndDates();
             refreshAllViews();
             lucide.createIcons();
