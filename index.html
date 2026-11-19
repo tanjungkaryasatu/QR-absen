@@ -89,38 +89,24 @@
             border-radius: 9999px;
         }
 
-        /* Print Styles untuk Cetak Kartu QR Multi-Halaman A4 */
-        @page {
-            size: A4 portrait;
-            margin: 10mm;
-        }
+        /* Print Styles untuk Cetak Kartu QR */
         @media print {
-            html, body {
-                background: #ffffff !important;
-                margin: 0 !important;
-                padding: 0 !important;
-                height: auto !important;
-                overflow: visible !important;
+            body * {
+                visibility: hidden;
             }
-            body > *:not(#print-sheet-container) {
+            #print-area, #print-area * {
+                visibility: visible;
+            }
+            #print-area {
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 100%;
+                background: white !important;
+                padding: 0 !important;
+            }
+            .no-print {
                 display: none !important;
-            }
-            #print-sheet-container {
-                display: grid !important;
-                grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
-                gap: 12px !important;
-                width: 100% !important;
-                padding: 0 !important;
-                margin: 0 !important;
-                background: #ffffff !important;
-                position: static !important;
-            }
-            #print-sheet-container > div {
-                width: 100% !important;
-                break-inside: avoid !important;
-                page-break-inside: avoid !important;
-                -webkit-print-color-adjust: exact !important;
-                print-color-adjust: exact !important;
             }
         }
 
@@ -765,7 +751,7 @@
     <!-- MODAL 2: LIHAT / CETAK KARTU QR SISWA                     -->
     <!-- ========================================================= -->
     <div id="qr-card-modal" class="fixed inset-0 z-50 hidden bg-slate-950/70 flex items-center justify-center p-4">
-        <div class="bg-white rounded-xl max-w-4xl w-full p-5 shadow-xl border border-slate-200 max-h-[92vh] overflow-y-auto">
+        <div class="bg-white rounded-xl max-w-lg w-full p-5 shadow-xl border border-slate-200 max-h-[92vh] overflow-y-auto">
             <div class="flex items-center justify-between pb-3 border-b border-slate-200 no-print">
                 <h3 class="text-sm font-bold text-slate-900">Pratinjau Cetak Kartu QR Siswa</h3>
                 <button onclick="closeQrCardModal()" class="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500">
@@ -837,9 +823,6 @@
         </div>
     </div>
 
-    <!-- Kontainer Khusus Cetak Kertas A4 Multi-Halaman (Di Luar Modal Fixed) -->
-    <div id="print-sheet-container" class="hidden"></div>
-
     <!-- ========================================================= -->
     <!-- SCRIPT LOGIKA APLIKASI & FIREBASE CLOUD SYNC              -->
     <!-- ========================================================= -->
@@ -870,7 +853,7 @@
         let useLocalFallback = false;
 
         // Global State Aplikasi
-        window.appState = window.appState || {
+        window.appState = {
             students: [],
             attendance: [],
             settings: {
@@ -888,146 +871,66 @@
         };
 
         // Helper Status Koneksi Cloud di UI
-        function updateSyncStatusUI(mode, label) {
-            const dotDesktop = document.getElementById('sync-dot-desktop');
-            const textDesktop = document.getElementById('sync-status-desktop');
-            const dotMobile = document.getElementById('sync-dot-mobile');
-            const textMobile = document.getElementById('sync-status-mobile');
+        function setSyncStatus(isOnline, text) {
+            const dotDesk = document.getElementById('sync-dot-desktop');
+            const textDesk = document.getElementById('sync-status-desktop');
+            const dotMob = document.getElementById('sync-dot-mobile');
+            const textMob = document.getElementById('sync-status-mobile');
 
-            const colorClass = mode === 'online'
-                ? 'bg-emerald-400'
-                : mode === 'local'
-                    ? 'bg-sky-400'
-                    : 'bg-amber-400 animate-pulse';
+            const dotClass = isOnline
+                ? 'w-2 h-2 rounded-full bg-emerald-400'
+                : 'w-2 h-2 rounded-full bg-amber-400';
 
-            if (dotDesktop) dotDesktop.className = `w-2 h-2 rounded-full ${colorClass}`;
-            if (textDesktop) textDesktop.textContent = label;
-            if (dotMobile) dotMobile.className = `w-1.5 h-1.5 rounded-full ${colorClass}`;
-            if (textMobile) textMobile.textContent = mode === 'online' ? 'Online' : mode === 'local' ? 'Lokal' : 'Sinkron';
+            if (dotDesk) dotDesk.className = dotClass;
+            if (textDesk) textDesk.textContent = text;
+            if (dotMob) dotMob.className = isOnline ? 'w-1.5 h-1.5 rounded-full bg-emerald-500' : 'w-1.5 h-1.5 rounded-full bg-amber-500';
+            if (textMob) textMob.textContent = isOnline ? 'Online' : 'Lokal';
         }
 
-        // Penyimpanan Lokal (Cache & Fallback Offline)
-        function saveLocalData() {
+        // Fallback Penyimpanan Lokal (LocalStorage) jika Firebase belum diisi
+        function loadLocalFallbackData() {
+            useLocalFallback = true;
             try {
-                localStorage.setItem('eabsensi_k6_students', JSON.stringify(window.appState.students));
-                localStorage.setItem('eabsensi_k6_attendance', JSON.stringify(window.appState.attendance));
-                localStorage.setItem('eabsensi_k6_settings', JSON.stringify(window.appState.settings));
+                const savedStudents = localStorage.getItem('qr6_students');
+                const savedAttendance = localStorage.getItem('qr6_attendance');
+                const savedSettings = localStorage.getItem('qr6_settings');
+
+                if (savedSettings) {
+                    window.appState.settings = { ...window.appState.settings, ...JSON.parse(savedSettings) };
+                }
+                if (savedStudents) {
+                    window.appState.students = JSON.parse(savedStudents);
+                } else {
+                    window.appState.students = [];
+                }
+                if (savedAttendance) {
+                    window.appState.attendance = JSON.parse(savedAttendance);
+                }
             } catch (e) {
-                console.warn('Gagal menyimpan cache lokal:', e);
+                console.warn('Error membaca localStorage:', e);
             }
+            applySettingsToUI();
+            refreshAllViews();
         }
 
-        function loadLocalData() {
+        function persistLocalFallback() {
+            if (!useLocalFallback) return;
             try {
-                const s = localStorage.getItem('eabsensi_k6_students');
-                const a = localStorage.getItem('eabsensi_k6_attendance');
-                const cfg = localStorage.getItem('eabsensi_k6_settings');
-                if (s) window.appState.students = JSON.parse(s);
-                if (a) window.appState.attendance = JSON.parse(a);
-                if (cfg) window.appState.settings = { ...window.appState.settings, ...JSON.parse(cfg) };
+                localStorage.setItem('qr6_students', JSON.stringify(window.appState.students));
+                localStorage.setItem('qr6_attendance', JSON.stringify(window.appState.attendance));
+                localStorage.setItem('qr6_settings', JSON.stringify(window.appState.settings));
             } catch (e) {
-                console.warn('Gagal membaca cache lokal:', e);
+                console.warn('Error menyimpan localStorage:', e);
             }
-            if (typeof window.refreshAllUI === 'function') window.refreshAllUI();
         }
 
-        // Operasi CRUD Cloud + Lokal
-        window.cloudSaveStudent = async function(student) {
-            const idx = window.appState.students.findIndex(s => s.id === student.id);
-            if (idx >= 0) {
-                window.appState.students[idx] = student;
-            } else {
-                window.appState.students.push(student);
-            }
-            saveLocalData();
-            if (typeof window.refreshAllUI === 'function') window.refreshAllUI();
-
-            if (!useLocalFallback && db && currentUser) {
-                try {
-                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', student.id), student);
-                } catch (err) {
-                    console.error('Gagal menyimpan siswa ke cloud:', err);
-                }
-            }
-        };
-
-        window.cloudDeleteStudent = async function(studentId) {
-            window.appState.students = window.appState.students.filter(s => s.id !== studentId);
-            saveLocalData();
-            if (typeof window.refreshAllUI === 'function') window.refreshAllUI();
-
-            if (!useLocalFallback && db && currentUser) {
-                try {
-                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students', studentId));
-                } catch (err) {
-                    console.error('Gagal menghapus siswa dari cloud:', err);
-                }
-            }
-        };
-
-        window.cloudSaveAttendance = async function(attRecord) {
-            const idx = window.appState.attendance.findIndex(a => a.id === attRecord.id);
-            if (idx >= 0) {
-                window.appState.attendance[idx] = attRecord;
-            } else {
-                window.appState.attendance.push(attRecord);
-            }
-            saveLocalData();
-            if (typeof window.refreshAllUI === 'function') window.refreshAllUI();
-
-            if (!useLocalFallback && db && currentUser) {
-                try {
-                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'attendance', attRecord.id), attRecord);
-                } catch (err) {
-                    console.error('Gagal menyimpan absensi ke cloud:', err);
-                }
-            }
-        };
-
-        window.cloudSaveSettings = async function(newSettings) {
-            window.appState.settings = { ...window.appState.settings, ...newSettings };
-            saveLocalData();
-            if (typeof window.refreshAllUI === 'function') window.refreshAllUI();
-
-            if (!useLocalFallback && db && currentUser) {
-                try {
-                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), window.appState.settings);
-                } catch (err) {
-                    console.error('Gagal menyimpan pengaturan ke cloud:', err);
-                }
-            }
-        };
-
-        window.cloudResetAllData = async function() {
-            window.appState.students = [];
-            window.appState.attendance = [];
-            saveLocalData();
-            if (typeof window.refreshAllUI === 'function') window.refreshAllUI();
-
-            if (!useLocalFallback && db && currentUser) {
-                try {
-                    const studentsSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'students'));
-                    const attSnap = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'attendance'));
-                    const allDocs = [...studentsSnap.docs, ...attSnap.docs];
-
-                    for (let i = 0; i < allDocs.length; i += 400) {
-                        const batch = writeBatch(db);
-                        allDocs.slice(i, i + 400).forEach(d => batch.delete(d.ref));
-                        await batch.commit();
-                    }
-                } catch (err) {
-                    console.error('Gagal mereset database cloud:', err);
-                }
-            }
-        };
-
-        // Inisialisasi Koneksi Firebase Cloud
+        // Inisialisasi Firebase & Listener Real-Time Lintas HP
         async function initCloudSync() {
-            loadLocalData();
+            applySettingsToUI();
 
             if (!firebaseConfig) {
-                useLocalFallback = true;
-                updateSyncStatusUI('local', 'Mode Penyimpanan Lokal');
+                setSyncStatus(false, 'Mode Lokal (Firebase Belum Diisi)');
+                loadLocalFallbackData();
                 return;
             }
 
@@ -1036,59 +939,143 @@
                 auth = getAuth(app);
                 db = getFirestore(app);
 
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                // Autentikasi wajib sebelum akses Firestore
+                if (!USER_FIREBASE_CONFIG && typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                     await signInWithCustomToken(auth, __initial_auth_token);
                 } else {
                     await signInAnonymously(auth);
                 }
 
                 onAuthStateChanged(auth, (user) => {
-                    if (!user) return;
                     currentUser = user;
-                    useLocalFallback = false;
-                    updateSyncStatusUI('online', 'Cloud Terhubung');
-
-                    // Listener Real-time Data Siswa
-                    onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'students'), (snapshot) => {
-                        const list = [];
-                        snapshot.forEach(docSnap => list.push(docSnap.data()));
-                        list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-                        window.appState.students = list;
-                        saveLocalData();
-                        if (typeof window.refreshAllUI === 'function') window.refreshAllUI();
-                    }, (err) => {
-                        console.error('Listener siswa error:', err);
-                    });
-
-                    // Listener Real-time Data Kehadiran
-                    onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'attendance'), (snapshot) => {
-                        const list = [];
-                        snapshot.forEach(docSnap => list.push(docSnap.data()));
-                        window.appState.attendance = list;
-                        saveLocalData();
-                        if (typeof window.refreshAllUI === 'function') window.refreshAllUI();
-                    }, (err) => {
-                        console.error('Listener absensi error:', err);
-                    });
-
-                    // Listener Real-time Pengaturan
-                    onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'settings', 'config'), (docSnap) => {
-                        if (docSnap.exists()) {
-                            window.appState.settings = { ...window.appState.settings, ...docSnap.data() };
-                            saveLocalData();
-                            if (typeof window.refreshAllUI === 'function') window.refreshAllUI();
-                        }
-                    }, (err) => {
-                        console.error('Listener pengaturan error:', err);
-                    });
+                    if (!user) return;
+                    setSyncStatus(true, 'Cloud Aktif (Real-Time)');
+                    attachRealtimeListeners();
                 });
             } catch (err) {
-                console.warn('Beralih ke penyimpanan lokal:', err);
-                useLocalFallback = true;
-                updateSyncStatusUI('local', 'Mode Lokal (Offline)');
+                console.error("Gagal inisialisasi Firebase:", err);
+                setSyncStatus(false, 'Mode Lokal (Offline)');
+                loadLocalFallbackData();
             }
         }
 
+        // Pasang Listener Firestore untuk sinkronisasi otomatis antar HP
+        function attachRealtimeListeners() {
+            if (!db || !currentUser) return;
+
+            const basePath = ['artifacts', appId, 'public', 'data'];
+
+            // 1. Listener Pengaturan
+            const settingsRef = doc(db, ...basePath, 'config', 'main');
+            onSnapshot(settingsRef, (snap) => {
+                if (snap.exists()) {
+                    window.appState.settings = { ...window.appState.settings, ...snap.data() };
+                    applySettingsToUI();
+                }
+            }, (err) => console.error('Snapshot settings error:', err));
+
+            // 2. Listener Data Siswa
+            const studentsCol = collection(db, ...basePath, 'students');
+            onSnapshot(studentsCol, (snapshot) => {
+                const list = [];
+                snapshot.forEach(docSnap => list.push(docSnap.data()));
+                list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+                window.appState.students = list;
+                refreshAllViews();
+            }, (err) => console.error('Snapshot students error:', err));
+
+            // 3. Listener Rekap Kehadiran
+            const attendanceCol = collection(db, ...basePath, 'attendance');
+            onSnapshot(attendanceCol, (snapshot) => {
+                const logs = [];
+                snapshot.forEach(docSnap => logs.push(docSnap.data()));
+                window.appState.attendance = logs;
+                refreshAllViews();
+            }, (err) => console.error('Snapshot attendance error:', err));
+        }
+
+        // Operasi Tulis ke Cloud / Local Fallback
+        window.cloudSaveStudent = async function(studentObj) {
+            if (db && currentUser && !useLocalFallback) {
+                const ref = doc(db, 'artifacts', appId, 'public', 'data', 'students', studentObj.nisn);
+                await setDoc(ref, studentObj, { merge: true });
+            } else {
+                const idx = window.appState.students.findIndex(s => s.nisn === studentObj.nisn);
+                if (idx >= 0) window.appState.students[idx] = studentObj;
+                else window.appState.students.push(studentObj);
+                window.appState.students.sort((a, b) => a.name.localeCompare(b.name));
+                persistLocalFallback();
+                refreshAllViews();
+            }
+        };
+
+        window.cloudDeleteStudent = async function(nisn) {
+            if (db && currentUser && !useLocalFallback) {
+                const ref = doc(db, 'artifacts', appId, 'public', 'data', 'students', nisn);
+                await deleteDoc(ref);
+            } else {
+                window.appState.students = window.appState.students.filter(s => s.nisn !== nisn);
+                persistLocalFallback();
+                refreshAllViews();
+            }
+        };
+
+        window.cloudSaveAttendance = async function(record) {
+            const docId = `${record.date}_${record.nisn}`;
+            if (db && currentUser && !useLocalFallback) {
+                const ref = doc(db, 'artifacts', appId, 'public', 'data', 'attendance', docId);
+                await setDoc(ref, record, { merge: true });
+            } else {
+                const idx = window.appState.attendance.findIndex(a => a.date === record.date && a.nisn === record.nisn);
+                if (idx >= 0) window.appState.attendance[idx] = record;
+                else window.appState.attendance.push(record);
+                persistLocalFallback();
+                refreshAllViews();
+            }
+        };
+
+        window.cloudSaveSettings = async function(newSettings) {
+            window.appState.settings = newSettings;
+            applySettingsToUI();
+            if (db && currentUser && !useLocalFallback) {
+                const ref = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'main');
+                await setDoc(ref, newSettings, { merge: true });
+            } else {
+                persistLocalFallback();
+            }
+        };
+
+        // Reset Bersih Seluruh Data Siswa & Kehadiran (Untuk Tahun Ajaran Baru)
+        window.cloudResetAllData = async function() {
+            if (db && currentUser && !useLocalFallback) {
+                const basePath = ['artifacts', appId, 'public', 'data'];
+                const studentsSnap = await getDocs(collection(db, ...basePath, 'students'));
+                const attendanceSnap = await getDocs(collection(db, ...basePath, 'attendance'));
+
+                const allRefs = [];
+                studentsSnap.forEach(d => allRefs.push(d.ref));
+                attendanceSnap.forEach(d => allRefs.push(d.ref));
+
+                // Firestore batch maksimal 500 dokumen per commit
+                for (let i = 0; i < allRefs.length; i += 450) {
+                    const batch = writeBatch(db);
+                    allRefs.slice(i, i + 450).forEach(ref => batch.delete(ref));
+                    await batch.commit();
+                }
+            }
+
+            window.appState.students = [];
+            window.appState.attendance = [];
+            window.appState.lastScannedCode = '';
+            window.appState.lastScannedTime = 0;
+
+            localStorage.removeItem('qr6_students');
+            localStorage.removeItem('qr6_attendance');
+            persistLocalFallback();
+            refreshAllViews();
+        };
+
+        // Jalankan inisialisasi setelah DOM siap
         initCloudSync();
     </script>
 
@@ -1096,25 +1083,1600 @@
     <!-- SCRIPT UTAMA UI, SCANNER, EXCEL, ZIP & KARTU QR           -->
     <!-- ========================================================= -->
     <script>
-        // Inisialisasi awal window.appState sebelum <script type="module"> selesai dimuat
-        window.appState = window.appState || {
-            students: [],
-            attendance: [],
-            settings: {
-                schoolName: 'SD Negeri 01 Nusantara',
-                className: 'Kelas 6',
-                deadlineTime: '06:30',
-                teacherName: 'Wali Kelas 6',
-                voiceEnabled: true,
-                customLogo: ''
-            },
-            activeTab: 'scan',
-            currentPhotoBase64: '',
-            lastScannedCode: '',
-            lastScannedTime: 0
-        };
-
         let videoStream = null;
         let scanAnimFrame = null;
         let isScannerRunning = false;
-// ... existing code ... -->
+        let currentFacingMode = "user"; // Default kamera depan ("user") untuk mode kiosk kelas
+        let wakeLockSentinel = null;
+        let deferredPwaPrompt = null;
+
+        // 0. INJEKSI SINGLE-FILE PWA (MANIFEST + SERVICE WORKER + SCREEN WAKE LOCK)
+        function injectSingleFilePwa() {
+            // Ikon cadangan SVG resolusi tinggi jika logo_sekolah.png belum tersedia
+            const svgIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+                <rect width="512" height="512" rx="112" fill="#0f172a"/>
+                <rect x="96" y="96" width="120" height="120" rx="20" fill="none" stroke="#6366f1" stroke-width="28"/>
+                <rect x="132" y="132" width="48" height="48" rx="8" fill="#ffffff"/>
+                <rect x="296" y="96" width="120" height="120" rx="20" fill="none" stroke="#6366f1" stroke-width="28"/>
+                <rect x="332" y="132" width="48" height="48" rx="8" fill="#ffffff"/>
+                <rect x="96" y="296" width="120" height="120" rx="20" fill="none" stroke="#6366f1" stroke-width="28"/>
+                <rect x="132" y="332" width="48" height="48" rx="8" fill="#ffffff"/>
+                <path d="M296 296h48v48h-48zm72 0h48v48h-48zm-72 72h48v48h-48zm72 36h48v12h-48z" fill="#10b981"/>
+            </svg>`;
+            const fallbackIconUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgIcon);
+
+            // Gunakan logo_sekolah.png jika ada di folder yang sama dengan index.html (aman untuk http/https maupun blob preview)
+            let resolvedSchoolLogoUrl = 'logo_sekolah.png';
+            try {
+                if (window.location.protocol.startsWith('http')) {
+                    resolvedSchoolLogoUrl = new URL('logo_sekolah.png', window.location.href).href;
+                }
+            } catch (e) {
+                resolvedSchoolLogoUrl = 'logo_sekolah.png';
+            }
+
+            const buildAndAttachManifest = (iconHref, iconType) => {
+                const appleIcon = document.getElementById('pwa-apple-icon');
+                if (appleIcon) appleIcon.href = iconHref;
+
+                const manifestObj = {
+                    name: 'E-Absensi QR Kelas 6',
+                    short_name: 'Absensi QR',
+                    description: 'Sistem Absensi Siswa Kelas 6 Berbasis QR Code & Cloud Real-Time',
+                    start_url: window.location.href,
+                    scope: './',
+                    display: 'standalone',
+                    orientation: 'portrait-primary',
+                    background_color: '#f8fafc',
+                    theme_color: '#0f172a',
+                    icons: [
+                        {
+                            src: iconHref,
+                            sizes: '512x512',
+                            type: iconType,
+                            purpose: 'any maskable'
+                        }
+                    ]
+                };
+
+                const manifestBlob = new Blob([JSON.stringify(manifestObj)], { type: 'application/manifest+json' });
+                const manifestUrl = URL.createObjectURL(manifestBlob);
+                const manifestLink = document.getElementById('pwa-manifest-link');
+                if (manifestLink) manifestLink.href = manifestUrl;
+            };
+
+            // Cek apakah file logo_sekolah.png tersedia, jika tidak otomatis pakai ikon QR bawaan
+            const probeImg = new Image();
+            probeImg.onload = () => buildAndAttachManifest(resolvedSchoolLogoUrl, 'image/png');
+            probeImg.onerror = () => buildAndAttachManifest(fallbackIconUrl, 'image/svg+xml');
+            probeImg.src = resolvedSchoolLogoUrl;
+
+            // Daftarkan Service Worker ringan berbasis Blob agar memenuhi kriteria instalasi PWA
+            if ('serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
+                const swCode = `
+                    self.addEventListener('install', (e) => self.skipWaiting());
+                    self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));
+                    self.addEventListener('fetch', (event) => {
+                        if (event.request.method !== 'GET') return;
+                        event.respondWith(
+                            fetch(event.request).catch(() => caches.match(event.request))
+                        );
+                    });
+                `;
+                try {
+                    const swBlob = new Blob([swCode], { type: 'application/javascript' });
+                    const swUrl = URL.createObjectURL(swBlob);
+                    navigator.serviceWorker.register(swUrl).catch(() => {});
+                } catch (e) {
+                    // Abaikan jika browser sandbox membatasi Blob SW
+                }
+            }
+
+            // Tangkap event instalasi PWA dari Chrome / Edge Android
+            window.addEventListener('beforeinstallprompt', (e) => {
+                e.preventDefault();
+                deferredPwaPrompt = e;
+                const btnHeader = document.getElementById('btn-install-pwa-header');
+                if (btnHeader) btnHeader.classList.remove('hidden');
+            });
+
+            window.addEventListener('appinstalled', () => {
+                deferredPwaPrompt = null;
+                const btnHeader = document.getElementById('btn-install-pwa-header');
+                if (btnHeader) btnHeader.classList.add('hidden');
+                showToast('Aplikasi E-Absensi QR berhasil dipasang di layar utama!', 'success');
+            });
+        }
+
+        async function triggerPwaInstall() {
+            if (deferredPwaPrompt) {
+                deferredPwaPrompt.prompt();
+                const { outcome } = await deferredPwaPrompt.userChoice;
+                if (outcome === 'accepted') {
+                    deferredPwaPrompt = null;
+                }
+            } else {
+                // Panduan manual untuk iOS Safari atau browser yang sudah menginstal
+                const isIos = /iphone|ipad|ipod/i.test(navigator.userAgent);
+                if (isIos) {
+                    showToast('Di Safari iPhone/iPad: Ketuk ikon Bagikan (Share) di bawah lalu pilih "Tambahkan ke Layar Utama".', 'warning');
+                } else {
+                    showToast('Ketuk menu titik tiga (⋮) di pojok kanan atas browser lalu pilih "Tambahkan ke Layar Utama" / "Instal Aplikasi".', 'warning');
+                }
+            }
+        }
+
+        async function requestScreenWakeLock() {
+            try {
+                if ('wakeLock' in navigator && !wakeLockSentinel) {
+                    wakeLockSentinel = await navigator.wakeLock.request('screen');
+                    wakeLockSentinel.addEventListener('release', () => {
+                        wakeLockSentinel = null;
+                    });
+                }
+            } catch (e) { /* Abaikan jika perangkat tidak mengizinkan */ }
+        }
+
+        function releaseScreenWakeLock() {
+            if (wakeLockSentinel) {
+                wakeLockSentinel.release().catch(() => {});
+                wakeLockSentinel = null;
+            }
+        }
+
+        // 1. JAM DIGITAL & INISIALISASI TANGGAL
+        function getTodayDateStr() {
+            const now = new Date();
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, '0');
+            const d = String(now.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        }
+
+        function initClockAndDates() {
+            const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+            const monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+
+            function updateClock() {
+                const now = new Date();
+                const hh = String(now.getHours()).padStart(2, '0');
+                const mm = String(now.getMinutes()).padStart(2, '0');
+                const ss = String(now.getSeconds()).padStart(2, '0');
+
+                const clockEl = document.getElementById('live-clock');
+                if (clockEl) clockEl.textContent = `${hh}:${mm}:${ss}`;
+
+                const fullDateStr = `${dayNames[now.getDay()]}, ${now.getDate()} ${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+                const headerDateEl = document.getElementById('header-date-full');
+                const scanTodayEl = document.getElementById('scan-today-label');
+                if (headerDateEl) headerDateEl.textContent = fullDateStr;
+                if (scanTodayEl) scanTodayEl.textContent = fullDateStr;
+            }
+
+            updateClock();
+            setInterval(updateClock, 1000);
+
+            // Set default date picker & filter bulan/tahun
+            const todayStr = getTodayDateStr();
+            const manualPicker = document.getElementById('manual-date-picker');
+            if (manualPicker) manualPicker.value = todayStr;
+
+            const now = new Date();
+            const monthSelect = document.getElementById('recap-month-select');
+            const yearSelect = document.getElementById('recap-year-select');
+            if (monthSelect) monthSelect.value = String(now.getMonth());
+            if (yearSelect) {
+                const curYear = now.getFullYear();
+                const startYear = Math.min(2025, curYear - 1);
+                const endYear = curYear + 5;
+                const years = [];
+                for (let y = startYear; y <= endYear; y++) {
+                    years.push(y);
+                }
+                yearSelect.innerHTML = years
+                    .map(y => `<option value="${y}" ${y === curYear ? 'selected' : ''}>${y}</option>`)
+                    .join('');
+            }
+        }
+
+        // 2. NAVIGASI ANTAR MENU (BOTTOM BAR & SIDEBAR)
+        function switchTab(tabName) {
+            window.appState.activeTab = tabName;
+
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            const target = document.getElementById(`tab-${tabName}`);
+            if (target) target.classList.remove('hidden');
+
+            const titles = {
+                scan: 'Scan Absensi Kelas',
+                manual: 'Input Kehadiran Manual',
+                students: 'Master Data Siswa & Kartu QR',
+                recap: 'Rekapitulasi & Laporan Bulanan',
+                settings: 'Pengaturan Identitas & Sistem'
+            };
+            const pageTitle = document.getElementById('page-title');
+            if (pageTitle) pageTitle.textContent = titles[tabName] || 'E-Absensi QR';
+
+            document.querySelectorAll('.nav-btn').forEach(btn => {
+                if (btn.dataset.nav === tabName) {
+                    btn.className = 'nav-btn w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-semibold transition-colors bg-indigo-600 text-white';
+                } else {
+                    btn.className = 'nav-btn w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-900 transition-colors';
+                }
+            });
+
+            document.querySelectorAll('.nav-btn-mobile').forEach(btn => {
+                if (btn.dataset.nav === tabName) {
+                    btn.className = 'nav-btn-mobile flex flex-col items-center justify-center py-1.5 px-2.5 rounded-lg text-indigo-600 bg-indigo-50';
+                } else {
+                    btn.className = 'nav-btn-mobile flex flex-col items-center justify-center py-1.5 px-2.5 rounded-lg text-slate-500';
+                }
+            });
+
+            if (tabName !== 'scan' && isScannerRunning) {
+                stopScanner();
+            }
+
+            refreshAllViews();
+            lucide.createIcons();
+        }
+
+        // 3. EFEK SUARA BIP & PANGGILAN SUARA (TEXT-TO-SPEECH INDONESIA)
+        function playBeepSound(type = 'success') {
+            try {
+                const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                if (!AudioCtx) return;
+                const ctx = new AudioCtx();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+
+                if (type === 'success') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(880, ctx.currentTime);
+                    osc.frequency.setValueAtTime(1174.66, ctx.currentTime + 0.08);
+                    gain.gain.setValueAtTime(0.18, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.25);
+                    osc.start(ctx.currentTime);
+                    osc.stop(ctx.currentTime + 0.25);
+                } else {
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(240, ctx.currentTime);
+                    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+                    osc.start(ctx.currentTime);
+                    osc.stop(ctx.currentTime + 0.3);
+                }
+            } catch (e) {
+                // Abaikan jika browser membatasi autoplay audio
+            }
+        }
+
+        function speakIndonesian(text) {
+            if (!window.appState.settings.voiceEnabled) return;
+            if (!('speechSynthesis' in window)) return;
+            try {
+                window.speechSynthesis.cancel();
+                const utter = new SpeechSynthesisUtterance(text);
+                utter.lang = 'id-ID';
+                utter.rate = 1.02;
+                utter.volume = 1.0;
+                window.speechSynthesis.speak(utter);
+            } catch (e) {
+                // Abaikan jika TTS tidak tersedia
+            }
+        }
+
+        // Efek Beep diikuti Jeda singkat lalu Suara Voice + Feedback Visual di Kamera
+        function triggerAudioAndVisualFeedback(type, voiceText, overlayInfo = null) {
+            playBeepSound(type);
+            if (voiceText) {
+                setTimeout(() => {
+                    speakIndonesian(voiceText);
+                }, 320);
+            }
+            if (overlayInfo) {
+                showCameraScanFeedback(overlayInfo);
+            }
+        }
+
+        let overlayHideTimer = null;
+        function showCameraScanFeedback({ statusType, title, subtitle, badgeText, photoUrl }) {
+            const reticle = document.getElementById('scan-reticle-box');
+            const overlay = document.getElementById('camera-scan-overlay');
+            const card = document.getElementById('camera-overlay-card');
+
+            if (reticle) {
+                const flashClass = statusType === 'success'
+                    ? 'border-emerald-400 scale-105'
+                    : statusType === 'warning'
+                        ? 'border-amber-400 scale-105'
+                        : 'border-rose-500 scale-105';
+                reticle.classList.add(...flashClass.split(' '));
+                setTimeout(() => reticle.classList.remove(...flashClass.split(' ')), 600);
+            }
+
+            if (!overlay || !card || !isScannerRunning) return;
+
+            const borderColors = {
+                success: 'border-emerald-500',
+                warning: 'border-amber-500',
+                error: 'border-rose-500'
+            };
+            const badgeColors = {
+                success: 'bg-emerald-100 text-emerald-800',
+                warning: 'bg-amber-100 text-amber-800',
+                error: 'bg-rose-100 text-rose-800'
+            };
+            const iconBg = {
+                success: 'bg-emerald-500 text-white',
+                warning: 'bg-amber-500 text-white',
+                error: 'bg-rose-500 text-white'
+            };
+
+            card.className = `animate-scan-card bg-white rounded-2xl p-4 max-w-xs w-full shadow-2xl border-2 ${borderColors[statusType] || 'border-emerald-500'} text-center`;
+            card.innerHTML = `
+                <div class="relative inline-block mb-2">
+                    ${photoUrl
+                        ? `<img src="${photoUrl}" alt="${title}" class="w-16 h-16 rounded-xl object-cover border-2 border-slate-200 mx-auto">`
+                        : `<div class="w-14 h-14 rounded-xl ${iconBg[statusType]} flex items-center justify-center mx-auto font-bold text-xl">!</div>`
+                    }
+                    <span class="absolute -bottom-1.5 -right-1.5 w-6 h-6 rounded-full ${iconBg[statusType]} flex items-center justify-center text-xs font-bold shadow">
+                        ${statusType === 'error' ? '✕' : '✓'}
+                    </span>
+                </div>
+                <div class="mt-1">
+                    <span class="inline-block px-2.5 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wide ${badgeColors[statusType]}">${badgeText}</span>
+                </div>
+                <h4 class="font-bold text-slate-900 text-sm mt-1.5 truncate">${title}</h4>
+                <p class="text-xs text-slate-500 font-medium mt-0.5">${subtitle}</p>
+            `;
+
+            overlay.classList.remove('hidden');
+            if (overlayHideTimer) clearTimeout(overlayHideTimer);
+            overlayHideTimer = setTimeout(() => {
+                overlay.classList.add('hidden');
+            }, 2200);
+        }
+
+        // 4. KONTROL KAMERA SCANNER NATIVE GETUSERMEDIA + JSQR (TANPA MIRROR AGAR QR AKURAT)
+        async function startScanner(preferredFacing = currentFacingMode) {
+            const wrapperEl = document.getElementById('qr-video-wrapper');
+            const videoEl = document.getElementById('qr-video');
+            const canvasEl = document.getElementById('qr-canvas');
+            const placeholder = document.getElementById('camera-placeholder');
+            const btnText = document.getElementById('btn-camera-text');
+            const btnSwitch = document.getElementById('btn-switch-camera');
+            const btnFacingLabel = document.getElementById('btn-facing-label');
+
+            if (isScannerRunning) {
+                stopScanner(true);
+            }
+
+            try {
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                    throw new Error('Browser tidak mendukung akses kamera.');
+                }
+
+                // Minta kamera depan (user) terlebih dahulu; jika gagal (misal laptop tertentu), fallback ke kamera default
+                let stream = null;
+                try {
+                    stream = await navigator.mediaDevices.getUserMedia({
+                        video: {
+                            facingMode: { ideal: preferredFacing },
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        },
+                        audio: false
+                    });
+                    currentFacingMode = preferredFacing;
+                } catch (constraintErr) {
+                    stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                }
+
+                videoStream = stream;
+                videoEl.srcObject = stream;
+                videoEl.setAttribute('playsinline', 'true');
+                videoEl.muted = true;
+                await videoEl.play();
+
+                if (placeholder) placeholder.classList.add('hidden');
+                if (wrapperEl) wrapperEl.classList.remove('hidden');
+                if (btnText) btnText.textContent = 'Matikan Kamera';
+
+                isScannerRunning = true;
+                if (btnSwitch) btnSwitch.classList.remove('hidden');
+                if (btnFacingLabel) {
+                    btnFacingLabel.textContent = currentFacingMode === 'user' ? 'Pindah Belakang' : 'Pindah Depan';
+                }
+                requestScreenWakeLock();
+
+                const ctx = canvasEl.getContext('2d', { willReadFrequently: true });
+                const mirrorCanvas = document.createElement('canvas');
+                const mirrorCtx = mirrorCanvas.getContext('2d', { willReadFrequently: true });
+                const nativeDetector = ('BarcodeDetector' in window)
+                    ? new window.BarcodeDetector({ formats: ['qr_code'] })
+                    : null;
+
+                let isScanningFrame = false;
+
+                const tickScan = async () => {
+                    if (!isScannerRunning) return;
+                    if (!isScanningFrame && videoEl.readyState === videoEl.HAVE_ENOUGH_DATA && videoEl.videoWidth > 0) {
+                        isScanningFrame = true;
+                        try {
+                            // Perkecil resolusi pemrosesan agar cepat & ringan di semua HP
+                            const scale = Math.min(1, 640 / videoEl.videoWidth);
+                            const w = Math.floor(videoEl.videoWidth * scale);
+                            const h = Math.floor(videoEl.videoHeight * scale);
+
+                            canvasEl.width = w;
+                            canvasEl.height = h;
+                            ctx.drawImage(videoEl, 0, 0, w, h);
+
+                            let detectedValue = null;
+
+                            // 1. Coba mesin BarcodeDetector bawaan Chrome (akselerasi hardware, sangat cepat)
+                            if (nativeDetector) {
+                                try {
+                                    const barcodes = await nativeDetector.detect(canvasEl);
+                                    if (barcodes && barcodes.length > 0 && barcodes[0].rawValue) {
+                                        detectedValue = barcodes[0].rawValue;
+                                    }
+                                } catch (e) { /* fallback ke jsQR */ }
+                            }
+
+                            // 2. Fallback jsQR orientasi normal
+                            if (!detectedValue && typeof jsQR === 'function') {
+                                const imageData = ctx.getImageData(0, 0, w, h);
+                                const codeNormal = jsQR(imageData.data, w, h, {
+                                    inversionAttempts: "attemptBoth"
+                                });
+                                if (codeNormal && codeNormal.data) {
+                                    detectedValue = codeNormal.data;
+                                } else {
+                                    // 3. Fallback jsQR orientasi un-mirrored (antisipasi kamera depan HP yang auto-mirror)
+                                    mirrorCanvas.width = w;
+                                    mirrorCanvas.height = h;
+                                    mirrorCtx.save();
+                                    mirrorCtx.translate(w, 0);
+                                    mirrorCtx.scale(-1, 1);
+                                    mirrorCtx.drawImage(canvasEl, 0, 0, w, h);
+                                    mirrorCtx.restore();
+
+                                    const mirrorData = mirrorCtx.getImageData(0, 0, w, h);
+                                    const codeMirror = jsQR(mirrorData.data, w, h, {
+                                        inversionAttempts: "attemptBoth"
+                                    });
+                                    if (codeMirror && codeMirror.data) {
+                                        detectedValue = codeMirror.data;
+                                    }
+                                }
+                            }
+
+                            if (detectedValue) {
+                                processScannedQrCode(detectedValue, false);
+                            }
+                        } finally {
+                            isScanningFrame = false;
+                        }
+                    }
+                    scanAnimFrame = requestAnimationFrame(tickScan);
+                };
+
+                scanAnimFrame = requestAnimationFrame(tickScan);
+            } catch (err) {
+                console.error("Gagal membuka kamera:", err);
+                isScannerRunning = false;
+                if (wrapperEl) wrapperEl.classList.add('hidden');
+                if (placeholder) placeholder.classList.remove('hidden');
+                if (btnText) btnText.textContent = 'Aktifkan Kamera';
+                if (btnSwitch) btnSwitch.classList.add('hidden');
+                showToast('Kamera gagal diakses. Pastikan izin kamera aktif & tidak dipakai aplikasi lain.', 'error');
+            }
+        }
+
+        function stopScanner(keepPlaceholderHidden = false) {
+            const wrapperEl = document.getElementById('qr-video-wrapper');
+            const videoEl = document.getElementById('qr-video');
+            const placeholder = document.getElementById('camera-placeholder');
+            const btnText = document.getElementById('btn-camera-text');
+            const btnSwitch = document.getElementById('btn-switch-camera');
+
+            if (scanAnimFrame) {
+                cancelAnimationFrame(scanAnimFrame);
+                scanAnimFrame = null;
+            }
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                videoStream = null;
+            }
+            if (videoEl) {
+                videoEl.srcObject = null;
+            }
+
+            isScannerRunning = false;
+            releaseScreenWakeLock();
+            if (wrapperEl) wrapperEl.classList.add('hidden');
+            if (!keepPlaceholderHidden && placeholder) placeholder.classList.remove('hidden');
+            if (btnText) btnText.textContent = 'Aktifkan Kamera';
+            if (btnSwitch) btnSwitch.classList.add('hidden');
+        }
+
+        function toggleCameraScanner() {
+            if (isScannerRunning) stopScanner();
+            else startScanner(currentFacingMode);
+        }
+
+        function switchCameraFacing() {
+            const nextMode = currentFacingMode === 'user' ? 'environment' : 'user';
+            startScanner(nextMode);
+        }
+
+        // 5. LOGIKA PEMROSESAN QR CODE & BATAS JAM 06:30
+        function handleManualNisnScan(e) {
+            e.preventDefault();
+            const input = document.getElementById('quick-nisn-input');
+            const val = (input.value || '').trim();
+            if (!val) return;
+            processScannedQrCode(val, true);
+            input.value = '';
+        }
+
+        async function processScannedQrCode(rawCode, bypassCooldown = false) {
+            const cleanCode = rawCode.trim();
+            const nowMs = Date.now();
+
+            if (!bypassCooldown && cleanCode === window.appState.lastScannedCode && (nowMs - window.appState.lastScannedTime) < 3500) {
+                return;
+            }
+            window.appState.lastScannedCode = cleanCode;
+            window.appState.lastScannedTime = nowMs;
+
+            const student = window.appState.students.find(s => s.nisn === cleanCode);
+            if (!student) {
+                showToast(`QR Code "${cleanCode}" tidak terdaftar di database Kelas 6!`, 'error');
+                triggerAudioAndVisualFeedback('error', 'Maaf, kartu tidak terdaftar.', {
+                    statusType: 'error',
+                    badgeText: 'TIDAK TERDAFTAR',
+                    title: 'Kartu Tidak Dikenal',
+                    subtitle: `Kode: ${cleanCode}`,
+                    photoUrl: ''
+                });
+                return;
+            }
+
+            const todayStr = getTodayDateStr();
+            const existingLog = window.appState.attendance.find(
+                log => log.date === todayStr && log.nisn === student.nisn
+            );
+
+            if (existingLog) {
+                renderLastScanCard(student, existingLog, true);
+                showToast(`${student.name} sudah tercatat ${existingLog.status} pukul ${existingLog.time}.`, 'warning');
+                triggerAudioAndVisualFeedback('error', `${student.name}, sudah melakukan absensi hari ini.`, {
+                    statusType: 'warning',
+                    badgeText: `SUDAH ABSEN (${existingLog.status})`,
+                    title: student.name,
+                    subtitle: `Tercatat pukul ${existingLog.time} WIB`,
+                    photoUrl: student.photo || getDefaultAvatar(student.name, student.gender)
+                });
+                return;
+            }
+
+            const now = new Date();
+            const currentHour = now.getHours();
+            const currentMin = now.getMinutes();
+            const timeStr = `${String(currentHour).padStart(2, '0')}:${String(currentMin).padStart(2, '0')}`;
+
+            const deadlineStr = window.appState.settings.deadlineTime || '06:30';
+            const [deadH, deadM] = deadlineStr.split(':').map(Number);
+
+            const totalCurrentMinutes = currentHour * 60 + currentMin;
+            const totalDeadlineMinutes = deadH * 60 + deadM;
+
+            let status = 'Hadir';
+            let lateMinutes = 0;
+
+            if (totalCurrentMinutes > totalDeadlineMinutes) {
+                status = 'Terlambat';
+                lateMinutes = totalCurrentMinutes - totalDeadlineMinutes;
+            }
+
+            const attendanceRecord = {
+                date: todayStr,
+                nisn: student.nisn,
+                studentName: student.name,
+                gender: student.gender,
+                time: timeStr,
+                status: status,
+                lateMinutes: lateMinutes,
+                timestamp: nowMs
+            };
+
+            await window.cloudSaveAttendance(attendanceRecord);
+            renderLastScanCard(student, attendanceRecord, false);
+
+            const studentPhoto = student.photo || getDefaultAvatar(student.name, student.gender);
+
+            if (status === 'Hadir') {
+                showToast(`${student.name} tercatat HADIR pukul ${timeStr} WIB`, 'success');
+                triggerAudioAndVisualFeedback('success', `Terima kasih, ${student.name}. Hadir tepat waktu.`, {
+                    statusType: 'success',
+                    badgeText: 'BERHASIL • HADIR',
+                    title: student.name,
+                    subtitle: `Masuk pukul ${timeStr} WIB`,
+                    photoUrl: studentPhoto
+                });
+            } else {
+                showToast(`${student.name} tercatat TERLAMBAT ${lateMinutes} menit (${timeStr} WIB)`, 'warning');
+                triggerAudioAndVisualFeedback('success', `Terima kasih, ${student.name}. Tercatat terlambat.`, {
+                    statusType: 'warning',
+                    badgeText: `TERLAMBAT (+${lateMinutes} MENIT)`,
+                    title: student.name,
+                    subtitle: `Masuk pukul ${timeStr} WIB`,
+                    photoUrl: studentPhoto
+                });
+            }
+        }
+
+        function renderLastScanCard(student, log, isDuplicate = false) {
+            const emptyBox = document.getElementById('last-scan-empty');
+            const cardBox = document.getElementById('last-scan-card');
+            if (!emptyBox || !cardBox) return;
+
+            emptyBox.classList.add('hidden');
+            cardBox.classList.remove('hidden');
+
+            const isLate = log.status === 'Terlambat';
+            const badgeStyle = isDuplicate
+                ? 'bg-slate-100 text-slate-700 border-slate-300'
+                : isLate
+                    ? 'bg-amber-100 text-amber-800 border-amber-200'
+                    : 'bg-emerald-100 text-emerald-800 border-emerald-200';
+
+            const statusText = isDuplicate
+                ? `SUDAH ABSEN (${log.status.toUpperCase()})`
+                : isLate
+                    ? `TERLAMBAT (+${log.lateMinutes} MENIT)`
+                    : 'HADIR TEPAT WAKTU';
+
+            cardBox.innerHTML = `
+                <div class="p-3.5 rounded-lg border ${isLate ? 'bg-amber-50/60 border-amber-200' : 'bg-emerald-50/60 border-emerald-200'} flex items-center gap-3.5">
+                    <img src="${student.photo || getDefaultAvatar(student.name, student.gender)}" alt="${student.name}" class="w-16 h-16 rounded-lg object-cover border border-slate-200 bg-white shrink-0">
+                    <div class="min-w-0 flex-1">
+                        <span class="inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${badgeStyle} mb-1">${statusText}</span>
+                        <h4 class="font-bold text-slate-900 text-sm truncate">${student.name}</h4>
+                        <div class="text-xs text-slate-500 font-medium mt-0.5">NISN: ${student.nisn} • ${student.gender}</div>
+                        <div class="text-xs font-semibold text-slate-700 mt-1 flex items-center gap-1">
+                            <i data-lucide="clock" class="w-3.5 h-3.5 text-slate-400"></i>
+                            <span>Tercatat pukul ${log.time} WIB</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            lucide.createIcons();
+        }
+
+        // 6. RENDER DASHBOARD TAB SCAN (STATISTIK & LOG HARI INI)
+        function renderScanDashboard() {
+            const todayStr = getTodayDateStr();
+            const students = window.appState.students || [];
+            const todayLogs = (window.appState.attendance || []).filter(a => a.date === todayStr);
+
+            const hadirCount = todayLogs.filter(a => a.status === 'Hadir').length;
+            const telatCount = todayLogs.filter(a => a.status === 'Terlambat').length;
+            const totalRecorded = todayLogs.length;
+            const belumCount = Math.max(0, students.length - totalRecorded);
+
+            const elHadir = document.getElementById('quick-stat-hadir');
+            const elTelat = document.getElementById('quick-stat-telat');
+            const elBelum = document.getElementById('quick-stat-belum');
+            const elLogCount = document.getElementById('today-log-count');
+
+            if (elHadir) elHadir.textContent = hadirCount;
+            if (elTelat) elTelat.textContent = telatCount;
+            if (elBelum) elBelum.textContent = belumCount;
+            if (elLogCount) elLogCount.textContent = `${totalRecorded} Siswa`;
+
+            const datalist = document.getElementById('student-nisn-list');
+            if (datalist) {
+                datalist.innerHTML = students.map(s => `<option value="${s.nisn}">${s.name}</option>`).join('');
+            }
+
+            const recentList = document.getElementById('today-recent-list');
+            if (!recentList) return;
+
+            if (todayLogs.length === 0) {
+                recentList.innerHTML = `<p class="text-xs text-slate-400 text-center py-6">Belum ada data kehadiran hari ini.</p>`;
+                return;
+            }
+
+            const sortedLogs = [...todayLogs].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+            recentList.innerHTML = sortedLogs.map(log => {
+                const st = students.find(s => s.nisn === log.nisn);
+                const photoUrl = st?.photo || getDefaultAvatar(log.studentName, log.gender);
+                const badgeColors = {
+                    'Hadir': 'bg-emerald-100 text-emerald-700',
+                    'Terlambat': 'bg-amber-100 text-amber-700',
+                    'Sakit': 'bg-sky-100 text-sky-700',
+                    'Izin': 'bg-indigo-100 text-indigo-700',
+                    'Alpa': 'bg-rose-100 text-rose-700'
+                };
+                return `
+                    <div class="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200/70">
+                        <div class="flex items-center gap-2.5 min-w-0">
+                            <img src="${photoUrl}" alt="${log.studentName}" class="w-8 h-8 rounded-lg object-cover shrink-0 border border-slate-200">
+                            <div class="min-w-0">
+                                <div class="text-xs font-bold text-slate-800 truncate">${log.studentName}</div>
+                                <div class="text-[10px] text-slate-500 tabular-nums">Pukul ${log.time} WIB</div>
+                            </div>
+                        </div>
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold shrink-0 ${badgeColors[log.status] || 'bg-slate-200 text-slate-700'}">${log.status}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // 7. MENU 2: ABSENSI MANUAL (HADIR / SAKIT / IZIN / ALPA)
+        function renderManualAttendance() {
+            const container = document.getElementById('manual-student-list');
+            if (!container) return;
+
+            const selectedDate = document.getElementById('manual-date-picker')?.value || getTodayDateStr();
+            const keyword = (document.getElementById('manual-search-input')?.value || '').toLowerCase().trim();
+
+            const students = (window.appState.students || []).filter(s =>
+                s.name.toLowerCase().includes(keyword) || s.nisn.toLowerCase().includes(keyword)
+            );
+            const dateLogs = (window.appState.attendance || []).filter(a => a.date === selectedDate);
+
+            if (students.length === 0) {
+                container.innerHTML = `<div class="text-center py-8 text-xs text-slate-400">Tidak ada siswa yang sesuai pencarian.</div>`;
+                return;
+            }
+
+            container.innerHTML = students.map(st => {
+                const log = dateLogs.find(l => l.nisn === st.nisn);
+                const currentStatus = log ? log.status : '';
+                const statuses = ['Hadir', 'Sakit', 'Izin', 'Alpa'];
+
+                const buttonsHTML = statuses.map(status => {
+                    const isActive = currentStatus === status || (status === 'Hadir' && currentStatus === 'Terlambat');
+                    const activeStyles = {
+                        'Hadir': 'bg-emerald-600 text-white border-emerald-600',
+                        'Sakit': 'bg-sky-600 text-white border-sky-600',
+                        'Izin': 'bg-indigo-600 text-white border-indigo-600',
+                        'Alpa': 'bg-rose-600 text-white border-rose-600'
+                    };
+                    const btnClass = isActive
+                        ? activeStyles[status]
+                        : 'bg-white text-slate-600 border-slate-300 hover:bg-slate-50';
+                    const labelText = (status === 'Hadir' && currentStatus === 'Terlambat') ? 'Telat' : status;
+
+                    return `<button type="button" onclick="setManualStatus('${st.nisn}', '${status}')" class="px-2.5 py-1 rounded-md border text-xs font-semibold transition ${btnClass}">${labelText}</button>`;
+                }).join('');
+
+                return `
+                    <div class="p-3 bg-white hover:bg-slate-50/70 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                        <div class="flex items-center gap-3 min-w-0">
+                            <img src="${st.photo || getDefaultAvatar(st.name, st.gender)}" alt="${st.name}" class="w-9 h-9 rounded-lg object-cover border border-slate-200 shrink-0">
+                            <div class="min-w-0">
+                                <div class="text-xs font-bold text-slate-900 truncate">${st.name}</div>
+                                <div class="text-[11px] text-slate-500">NISN: ${st.nisn} • ${st.gender}</div>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-1.5">
+                            ${buttonsHTML}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function setManualStatus(nisn, status) {
+            const student = window.appState.students.find(s => s.nisn === nisn);
+            if (!student) return;
+
+            const selectedDate = document.getElementById('manual-date-picker')?.value || getTodayDateStr();
+            const now = new Date();
+            const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+            const record = {
+                date: selectedDate,
+                nisn: student.nisn,
+                studentName: student.name,
+                gender: student.gender,
+                time: timeStr,
+                status: status,
+                lateMinutes: 0,
+                timestamp: Date.now()
+            };
+
+            await window.cloudSaveAttendance(record);
+            showToast(`${student.name} ditandai ${status} (${selectedDate})`, 'success');
+        }
+
+        // 8. MENU 3: DATA SISWA, UPLOAD FOTO & CETAK KARTU QR
+        function renderStudentsGrid() {
+            const grid = document.getElementById('students-grid');
+            if (!grid) return;
+
+            const students = window.appState.students || [];
+            if (students.length === 0) {
+                grid.innerHTML = `<div class="col-span-full bg-white rounded-xl p-8 text-center text-xs text-slate-400 border border-slate-200">Belum ada data siswa. Klik "Tambah Siswa" atau impor dari Excel.</div>`;
+                return;
+            }
+
+            grid.innerHTML = students.map(st => {
+                const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(st.nisn)}`;
+                return `
+                    <div class="bg-white rounded-xl p-4 border border-slate-200 flex flex-col justify-between gap-3">
+                        <div class="flex items-start gap-3">
+                            <img src="${st.photo || getDefaultAvatar(st.name, st.gender)}" alt="${st.name}" class="w-12 h-12 rounded-lg object-cover border border-slate-200 shrink-0">
+                            <div class="min-w-0 flex-1">
+                                <span class="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600 mb-1">${st.gender}</span>
+                                <h3 class="font-bold text-slate-900 text-xs truncate">${st.name}</h3>
+                                <p class="text-[11px] font-mono text-slate-500 mt-0.5">${st.nisn}</p>
+                            </div>
+                            <img src="${qrUrl}" alt="QR ${st.nisn}" class="w-12 h-12 rounded-lg border border-slate-200 p-0.5 bg-white shrink-0">
+                        </div>
+                        <div class="pt-2.5 border-t border-slate-100 flex items-center justify-between gap-1.5">
+                            <button onclick="openSingleQrModal('${st.nisn}')" class="flex-1 py-1.5 px-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs transition flex items-center justify-center gap-1.5">
+                                <i data-lucide="qr-code" class="w-3.5 h-3.5"></i>
+                                Kartu QR
+                            </button>
+                            <button onclick="openStudentFormModal('${st.nisn}')" class="p-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 transition" title="Edit Siswa">
+                                <i data-lucide="pencil" class="w-3.5 h-3.5"></i>
+                            </button>
+                            <button onclick="confirmDeleteStudent('${st.nisn}')" class="p-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-600 transition" title="Hapus Siswa">
+                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            lucide.createIcons();
+        }
+
+        function openStudentFormModal(editNisn = null) {
+            const modal = document.getElementById('student-modal');
+            const title = document.getElementById('student-modal-title');
+            const idInput = document.getElementById('form-student-id');
+            const nisnInput = document.getElementById('form-nisn');
+            const nameInput = document.getElementById('form-name');
+            const photoPreview = document.getElementById('form-photo-preview');
+
+            if (editNisn) {
+                const st = window.appState.students.find(s => s.nisn === editNisn);
+                if (!st) return;
+                title.textContent = 'Edit Data Siswa';
+                idInput.value = st.nisn;
+                nisnInput.value = st.nisn;
+                nisnInput.readOnly = true;
+                nisnInput.classList.add('bg-slate-100');
+                nameInput.value = st.name;
+                window.appState.currentPhotoBase64 = st.photo || '';
+                photoPreview.src = st.photo || getDefaultAvatar(st.name, st.gender);
+                document.querySelectorAll('input[name="form-gender"]').forEach(r => {
+                    r.checked = (r.value === st.gender);
+                });
+            } else {
+                title.textContent = 'Tambah Data Siswa';
+                idInput.value = '';
+                nisnInput.value = '';
+                nisnInput.readOnly = false;
+                nisnInput.classList.remove('bg-slate-100');
+                nameInput.value = '';
+                window.appState.currentPhotoBase64 = '';
+                photoPreview.src = 'https://placehold.co/150x150/e2e8f0/334155?text=Foto';
+                document.querySelector('input[name="form-gender"][value="Laki-laki"]').checked = true;
+            }
+            modal.classList.remove('hidden');
+        }
+
+        function closeStudentFormModal() {
+            document.getElementById('student-modal').classList.add('hidden');
+        }
+
+        function handlePhotoUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    const maxSize = 220;
+                    let w = img.width;
+                    let h = img.height;
+                    if (w > h) {
+                        if (w > maxSize) { h *= maxSize / w; w = maxSize; }
+                    } else {
+                        if (h > maxSize) { w *= maxSize / h; h = maxSize; }
+                    }
+                    canvas.width = w;
+                    canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+                    const compressed = canvas.toDataURL('image/jpeg', 0.75);
+                    window.appState.currentPhotoBase64 = compressed;
+                    document.getElementById('form-photo-preview').src = compressed;
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function saveStudentForm(e) {
+            e.preventDefault();
+            const nisn = document.getElementById('form-nisn').value.trim();
+            const name = document.getElementById('form-name').value.trim();
+            const gender = document.querySelector('input[name="form-gender"]:checked')?.value || 'Laki-laki';
+            const photo = window.appState.currentPhotoBase64 || getDefaultAvatar(name, gender);
+
+            await window.cloudSaveStudent({ nisn, name, gender, photo });
+            closeStudentFormModal();
+            showToast(`Data siswa ${name} berhasil disimpan!`, 'success');
+        }
+
+        function confirmDeleteStudent(nisn) {
+            const st = window.appState.students.find(s => s.nisn === nisn);
+            if (!st) return;
+            const modal = document.getElementById('delete-modal');
+            document.getElementById('delete-modal-text').textContent = `Hapus data "${st.name}" (NISN: ${st.nisn}) dari kelas?`;
+            const confirmBtn = document.getElementById('confirm-delete-btn');
+            confirmBtn.onclick = async function() {
+                await window.cloudDeleteStudent(nisn);
+                closeDeleteModal();
+                showToast(`Data ${st.name} telah dihapus.`, 'success');
+            };
+            modal.classList.remove('hidden');
+        }
+
+        function closeDeleteModal() {
+            document.getElementById('delete-modal').classList.add('hidden');
+        }
+
+        function buildQrCardHTML(student) {
+            const s = window.appState.settings;
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(student.nisn)}`;
+            return `
+                <div class="w-60 rounded-xl border border-slate-300 bg-white overflow-hidden shadow-xs break-inside-avoid">
+                    <div class="bg-slate-900 text-white px-3 py-2 text-center border-b border-slate-800">
+                        <div class="text-[9px] font-semibold uppercase tracking-wider text-slate-300">${s.schoolName}</div>
+                        <div class="text-xs font-bold tracking-tight mt-0.5">KARTU IDENTITAS • ${s.className.toUpperCase()}</div>
+                    </div>
+                    <div class="p-3.5 flex flex-col items-center text-center">
+                        <img src="${student.photo || getDefaultAvatar(student.name, student.gender)}" alt="${student.name}" class="w-16 h-16 rounded-lg object-cover border border-slate-200 mb-2">
+                        <div class="font-bold text-slate-900 text-sm leading-tight">${student.name}</div>
+                        <div class="text-[11px] font-mono font-semibold text-slate-500 mt-0.5">NISN: ${student.nisn}</div>
+                        <div class="text-[10px] text-slate-500 font-medium mb-2.5">${student.gender}</div>
+                        <div class="p-2 rounded-lg border border-slate-200 bg-white">
+                            <img src="${qrUrl}" alt="QR ${student.nisn}" class="w-28 h-28">
+                        </div>
+                        <div class="text-[9px] text-slate-400 mt-2">Pindai kode QR saat memasuki kelas</div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function openSingleQrModal(nisn) {
+            const st = window.appState.students.find(s => s.nisn === nisn);
+            if (!st) return;
+            document.getElementById('print-area').innerHTML = buildQrCardHTML(st);
+            document.getElementById('qr-card-modal').classList.remove('hidden');
+        }
+
+        function openPrintAllModal() {
+            const students = window.appState.students || [];
+            if (students.length === 0) {
+                showToast('Belum ada data siswa untuk dicetak.', 'warning');
+                return;
+            }
+            document.getElementById('print-area').innerHTML = students.map(buildQrCardHTML).join('');
+            document.getElementById('qr-card-modal').classList.remove('hidden');
+        }
+
+        function closeQrCardModal() {
+            document.getElementById('qr-card-modal').classList.add('hidden');
+        }
+
+        // 9. MENU 4: REKAPITULASI BULANAN & EKSPOR EXCEL (.XLSX) - SISTEM 5 HARI KERJA (SENIN - JUMAT)
+        function getDaysInfoInMonth(year, monthIdx) {
+            const totalDays = new Date(year, monthIdx + 1, 0).getDate();
+            const dayNames = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+            const days = [];
+            let effectiveDaysCount = 0;
+
+            for (let d = 1; d <= totalDays; d++) {
+                const dateObj = new Date(year, monthIdx, d);
+                const dayOfWeek = dateObj.getDay();
+                const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+                if (!isWeekend) effectiveDaysCount++;
+
+                const dateStr = `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                days.push({
+                    dayNum: d,
+                    dayName: dayNames[dayOfWeek],
+                    isWeekend: isWeekend,
+                    dateStr: dateStr
+                });
+            }
+            return { days, effectiveDaysCount };
+        }
+
+        function getShortStatusCode(status) {
+            const map = {
+                'Hadir': 'H',
+                'Terlambat': 'T',
+                'Sakit': 'S',
+                'Izin': 'I',
+                'Alpa': 'A'
+            };
+            return map[status] || '';
+        }
+
+        function renderRecapTable() {
+            const todayStr = getTodayDateStr();
+            const allLogs = window.appState.attendance || [];
+            const todayLogs = allLogs.filter(a => a.date === todayStr);
+
+            document.getElementById('recap-today-hadir').textContent = todayLogs.filter(a => a.status === 'Hadir').length;
+            document.getElementById('recap-today-telat').textContent = todayLogs.filter(a => a.status === 'Terlambat').length;
+            document.getElementById('recap-today-sakit').textContent = todayLogs.filter(a => a.status === 'Sakit').length;
+            document.getElementById('recap-today-izin').textContent = todayLogs.filter(a => a.status === 'Izin').length;
+            document.getElementById('recap-today-alpa').textContent = todayLogs.filter(a => a.status === 'Alpa').length;
+
+            const monthIdx = parseInt(document.getElementById('recap-month-select')?.value ?? new Date().getMonth());
+            const yearVal = parseInt(document.getElementById('recap-year-select')?.value ?? new Date().getFullYear());
+            const prefixMonth = `${yearVal}-${String(monthIdx + 1).padStart(2, '0')}`;
+
+            const { days, effectiveDaysCount } = getDaysInfoInMonth(yearVal, monthIdx);
+            const monthLogs = allLogs.filter(a => (a.date || '').startsWith(prefixMonth));
+            const students = window.appState.students || [];
+
+            const thead = document.getElementById('recap-table-head');
+            const tbody = document.getElementById('recap-table-body');
+            if (!thead || !tbody) return;
+
+            const dateHeadersHTML = days.map(d => {
+                const weekendStyle = d.isWeekend ? 'bg-slate-200/80 text-slate-500' : 'bg-slate-50 text-slate-600';
+                return `<th class="py-2 px-1.5 font-bold text-center border-l border-slate-200 min-w-[32px] ${weekendStyle}">
+                    <div class="text-[11px]">${d.dayNum}</div>
+                    <div class="text-[9px] font-medium">${d.dayName}</div>
+                </th>`;
+            }).join('');
+
+            thead.innerHTML = `
+                <tr class="bg-slate-50 border-b border-slate-200 text-slate-600 text-[11px] uppercase">
+                    <th class="py-2.5 px-3 font-bold sticky left-0 bg-slate-50 z-10">No</th>
+                    <th class="py-2.5 px-3 font-bold sticky left-8 bg-slate-50 z-10 min-w-[160px]">Nama Siswa</th>
+                    <th class="py-2.5 px-2 font-bold text-center">L/P</th>
+                    ${dateHeadersHTML}
+                    <th class="py-2.5 px-2 font-bold text-center bg-emerald-50 text-emerald-700 border-l border-slate-200">H</th>
+                    <th class="py-2.5 px-2 font-bold text-center bg-amber-50 text-amber-700">T</th>
+                    <th class="py-2.5 px-2 font-bold text-center bg-sky-50 text-sky-700">S</th>
+                    <th class="py-2.5 px-2 font-bold text-center bg-indigo-50 text-indigo-700">I</th>
+                    <th class="py-2.5 px-2 font-bold text-center bg-rose-50 text-rose-700">A</th>
+                    <th class="py-2.5 px-2 font-bold text-center bg-slate-100 text-slate-700" title="Hari Efektif Senin-Jumat">Efektif</th>
+                    <th class="py-2.5 px-3 font-bold text-right bg-slate-100 text-slate-800">%</th>
+                </tr>
+            `;
+
+            if (students.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="${days.length + 10}" class="py-8 text-center text-slate-400">Belum ada data siswa.</td></tr>`;
+                return;
+            }
+
+            tbody.innerHTML = students.map((st, idx) => {
+                const stLogs = monthLogs.filter(l => l.nisn === st.nisn);
+                let h = 0, t = 0, s = 0, i = 0, a = 0;
+
+                const dayCellsHTML = days.map(d => {
+                    if (d.isWeekend) {
+                        return `<td class="py-2 px-1 text-center border-l border-slate-100 bg-slate-100/80 text-slate-400 font-medium" title="Libur (${d.dayName})">-</td>`;
+                    }
+                    const log = stLogs.find(l => l.date === d.dateStr);
+                    const code = log ? getShortStatusCode(log.status) : '';
+                    if (code === 'H') h++;
+                    else if (code === 'T') t++;
+                    else if (code === 'S') s++;
+                    else if (code === 'I') i++;
+                    else if (code === 'A') a++;
+
+                    const codeColors = {
+                        'H': 'text-emerald-700 bg-emerald-50/70 font-bold',
+                        'T': 'text-amber-700 bg-amber-50/70 font-bold',
+                        'S': 'text-sky-700 bg-sky-50/70 font-bold',
+                        'I': 'text-indigo-700 bg-indigo-50/70 font-bold',
+                        'A': 'text-rose-700 bg-rose-50/70 font-bold'
+                    };
+                    return `<td class="py-2 px-1 text-center border-l border-slate-100 ${codeColors[code] || 'text-slate-300'}">${code || '·'}</td>`;
+                }).join('');
+
+                const totalRecorded = h + t + s + i + a;
+                const denominator = totalRecorded > 0 ? totalRecorded : effectiveDaysCount;
+                const pct = denominator > 0 ? Math.round(((h + t) / denominator) * 100) : 0;
+
+                return `
+                    <tr class="hover:bg-slate-50/80">
+                        <td class="py-2 px-3 font-medium text-slate-500 sticky left-0 bg-white">${idx + 1}</td>
+                        <td class="py-2 px-3 font-semibold text-slate-900 sticky left-8 bg-white whitespace-nowrap">${st.name}</td>
+                        <td class="py-2 px-2 text-center text-slate-500">${st.gender === 'Laki-laki' ? 'L' : 'P'}</td>
+                        ${dayCellsHTML}
+                        <td class="py-2 px-2 text-center font-bold text-emerald-700 bg-emerald-50/40 border-l border-slate-200">${h}</td>
+                        <td class="py-2 px-2 text-center font-bold text-amber-700 bg-amber-50/40">${t}</td>
+                        <td class="py-2 px-2 text-center font-bold text-sky-700 bg-sky-50/40">${s}</td>
+                        <td class="py-2 px-2 text-center font-bold text-indigo-700 bg-indigo-50/40">${i}</td>
+                        <td class="py-2 px-2 text-center font-bold text-rose-700 bg-rose-50/40">${a}</td>
+                        <td class="py-2 px-2 text-center font-semibold text-slate-600 bg-slate-50">${effectiveDaysCount}</td>
+                        <td class="py-2 px-3 text-right font-bold text-slate-900 bg-slate-50">${pct}%</td>
+                    </tr>
+                `;
+            }).join('');
+
+            // Render Log Riwayat Bulan Ini
+            const logsContainer = document.getElementById('recap-logs-list');
+            if (logsContainer) {
+                if (monthLogs.length === 0) {
+                    logsContainer.innerHTML = `<p class="text-xs text-slate-400 text-center py-4">Belum ada riwayat absensi pada bulan ini.</p>`;
+                } else {
+                    const sortedMonthLogs = [...monthLogs].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                    logsContainer.innerHTML = sortedMonthLogs.slice(0, 60).map(l => `
+                        <div class="py-2.5 flex items-center justify-between text-xs">
+                            <div>
+                                <span class="font-bold text-slate-800">${l.studentName}</span>
+                                <span class="text-slate-400 ml-2">${l.date} • ${l.time} WIB</span>
+                            </div>
+                            <span class="font-bold text-slate-700">${l.status}</span>
+                        </div>
+                    `).join('');
+                }
+            }
+        }
+
+        // Ekspor Rekap Bulanan ke File Excel (.xlsx)
+        function exportRecapToExcel() {
+            const monthSelect = document.getElementById('recap-month-select');
+            const monthName = monthSelect.options[monthSelect.selectedIndex].text;
+            const monthIdx = parseInt(monthSelect.value);
+            const yearVal = parseInt(document.getElementById('recap-year-select').value);
+            const prefixMonth = `${yearVal}-${String(monthIdx + 1).padStart(2, '0')}`;
+
+            const { days, effectiveDaysCount } = getDaysInfoInMonth(yearVal, monthIdx);
+            const monthLogs = window.appState.attendance.filter(a => (a.date || '').startsWith(prefixMonth));
+            const students = window.appState.students;
+            const settings = window.appState.settings;
+
+            if (students.length === 0) {
+                showToast('Tidak ada data siswa untuk diekspor.', 'warning');
+                return;
+            }
+
+            const aoa = [
+                [`REKAPITULASI KEHADIRAN SISWA - ${settings.schoolName.toUpperCase()}`],
+                [`Kelas: ${settings.className} | Bulan: ${monthName} ${yearVal} | Wali Kelas: ${settings.teacherName} | Sistem: 5 Hari Kerja (Senin - Jumat)`],
+                [],
+                [
+                    'No',
+                    'NISN',
+                    'Nama Lengkap Siswa',
+                    'L/P',
+                    ...days.map(d => `${d.dayNum} (${d.dayName})`),
+                    'Hadir (H)',
+                    'Terlambat (T)',
+                    'Sakit (S)',
+                    'Izin (I)',
+                    'Alpa (A)',
+                    'Hari Efektif (Sen-Jum)',
+                    'Persentase Hadir'
+                ]
+            ];
+
+            students.forEach((st, idx) => {
+                const stLogs = monthLogs.filter(l => l.nisn === st.nisn);
+                let h = 0, t = 0, s = 0, i = 0, a = 0;
+
+                const dateCells = days.map(d => {
+                    if (d.isWeekend) return 'LIBUR';
+                    const log = stLogs.find(l => l.date === d.dateStr);
+                    const code = log ? getShortStatusCode(log.status) : '';
+                    if (code === 'H') h++;
+                    else if (code === 'T') t++;
+                    else if (code === 'S') s++;
+                    else if (code === 'I') i++;
+                    else if (code === 'A') a++;
+                    return code;
+                });
+
+                const totalRecorded = h + t + s + i + a;
+                const denominator = totalRecorded > 0 ? totalRecorded : effectiveDaysCount;
+                const pct = denominator > 0 ? Math.round(((h + t) / denominator) * 100) + '%' : '0%';
+
+                aoa.push([
+                    idx + 1,
+                    st.nisn,
+                    st.name,
+                    st.gender === 'Laki-laki' ? 'L' : 'P',
+                    ...dateCells,
+                    h,
+                    t,
+                    s,
+                    i,
+                    a,
+                    effectiveDaysCount,
+                    pct
+                ]);
+            });
+
+            aoa.push([]);
+            aoa.push(['Keterangan Kode:', 'H = Hadir Tepat Waktu', 'T = Terlambat', 'S = Sakit', 'I = Izin', 'A = Alpa', 'LIBUR = Hari Sabtu & Minggu (5 Hari Sekolah)']);
+
+            const worksheet = XLSX.utils.aoa_to_sheet(aoa);
+            worksheet['!cols'] = [
+                { wch: 5 },
+                { wch: 15 },
+                { wch: 28 },
+                { wch: 6 },
+                ...days.map(() => ({ wch: 9 })),
+                { wch: 10 },
+                { wch: 13 },
+                { wch: 10 },
+                { wch: 10 },
+                { wch: 10 },
+                { wch: 18 },
+                { wch: 16 }
+            ];
+
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, `Absensi ${monthName} ${yearVal}`);
+
+            const safeClassName = (settings.className || 'Kelas_6').replace(/\s+/g, '_');
+            XLSX.writeFile(workbook, `Rekap_Absensi_${safeClassName}_${monthName}_${yearVal}.xlsx`);
+            showToast(`File Excel Rekap ${monthName} ${yearVal} berhasil diunduh!`, 'success');
+        }
+
+        // 9B. FITUR IMPOR DATA SISWA EXCEL (.XLSX) & UPLOAD FOTO MASSAL (.ZIP)
+        function downloadStudentTemplateExcel() {
+            const sampleData = [
+                { 'NISN': '0134829106', 'Nama Lengkap': 'Nadia Putri Lestari', 'Jenis Kelamin': 'P' },
+                { 'NISN': '0134829107', 'Nama Lengkap': 'Rafi Pratama Putra', 'Jenis Kelamin': 'L' },
+                { 'NISN': '0134829108', 'Nama Lengkap': 'Zahra Aulia Rahma', 'Jenis Kelamin': 'P' }
+            ];
+            const ws = XLSX.utils.json_to_sheet(sampleData);
+            ws['!cols'] = [{ wch: 16 }, { wch: 30 }, { wch: 16 }];
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, 'Template_Siswa_Kelas6');
+            XLSX.writeFile(wb, 'Template_Data_Siswa_Kelas6.xlsx');
+            showToast('Template Excel berhasil diunduh!', 'success');
+        }
+
+        function handleImportStudentsExcel(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, { type: 'array' });
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    const jsonRows = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+
+                    let importedCount = 0;
+                    for (const row of jsonRows) {
+                        const keys = Object.keys(row);
+                        const nisnKey = keys.find(k => k.toLowerCase().includes('nisn'));
+                        const nameKey = keys.find(k => k.toLowerCase().includes('nama'));
+                        const jkKey = keys.find(k => k.toLowerCase().includes('kelamin') || k.toLowerCase() === 'jk' || k.toLowerCase() === 'l/p');
+
+                        const rawNisn = nisnKey ? String(row[nisnKey]).trim() : '';
+                        const rawName = nameKey ? String(row[nameKey]).trim() : '';
+                        const rawJk = jkKey ? String(row[jkKey]).trim().toUpperCase() : 'L';
+
+                        if (!rawNisn || !rawName) continue;
+
+                        const gender = (rawJk.startsWith('P') || rawJk.includes('PEREMPUAN') || rawJk.includes('WANITA'))
+                            ? 'Perempuan'
+                            : 'Laki-laki';
+
+                        const existing = window.appState.students.find(s => s.nisn === rawNisn);
+                        const photo = existing?.photo || getDefaultAvatar(rawName, gender);
+
+                        await window.cloudSaveStudent({
+                            nisn: rawNisn,
+                            name: rawName,
+                            gender: gender,
+                            photo: photo
+                        });
+                        importedCount++;
+                    }
+
+                    event.target.value = '';
+                    if (importedCount > 0) {
+                        showToast(`Berhasil mengimpor ${importedCount} data siswa dari Excel!`, 'success');
+                    } else {
+                        showToast('Tidak ada baris data valid ditemukan. Pastikan kolom NISN dan Nama Lengkap terisi.', 'warning');
+                    }
+                } catch (err) {
+                    console.error('Error membaca Excel:', err);
+                    showToast('Gagal membaca file Excel. Pastikan format .xlsx valid.', 'error');
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function compressImageBlobToBase64(blob) {
+            return new Promise((resolve, reject) => {
+                const url = URL.createObjectURL(blob);
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    const maxSize = 220;
+                    let w = img.width;
+                    let h = img.height;
+
+                    if (w > h) {
+                        if (w > maxSize) { h *= maxSize / w; w = maxSize; }
+                    } else {
+                        if (h > maxSize) { w *= maxSize / h; h = maxSize; }
+                    }
+
+                    canvas.width = w;
+                    canvas.height = h;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, w, h);
+                    URL.revokeObjectURL(url);
+                    resolve(canvas.toDataURL('image/jpeg', 0.75));
+                };
+                img.onerror = (err) => {
+                    URL.revokeObjectURL(url);
+                    reject(err);
+                };
+                img.src = url;
+            });
+        }
+
+        async function handleImportPhotosZip(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const btnText = document.getElementById('zip-upload-btn-text');
+            if (btnText) btnText.textContent = 'Memproses ZIP...';
+
+            try {
+                const zip = await JSZip.loadAsync(file);
+                let matchedCount = 0;
+
+                const entries = Object.keys(zip.files);
+                for (const filename of entries) {
+                    const zipEntry = zip.files[filename];
+                    if (zipEntry.dir) continue;
+
+                    const baseNameWithExt = filename.split('/').pop();
+                    if (!/\.(jpg|jpeg|png|webp)$/i.test(baseNameWithExt)) continue;
+
+                    const targetNisn = baseNameWithExt.replace(/\.[^/.]+$/, '').trim();
+                    const student = window.appState.students.find(s => s.nisn === targetNisn);
+
+                    if (student) {
+                        const blob = await zipEntry.async('blob');
+                        const compressedBase64 = await compressImageBlobToBase64(blob);
+                        await window.cloudSaveStudent({
+                            ...student,
+                            photo: compressedBase64
+                        });
+                        matchedCount++;
+                    }
+                }
+
+                event.target.value = '';
+                if (btnText) btnText.textContent = 'Unggah Arsip .zip';
+
+                if (matchedCount > 0) {
+                    showToast(`${matchedCount} foto siswa berhasil dicocokkan berdasarkan NISN!`, 'success');
+                } else {
+                    showToast('Tidak ada foto yang cocok dengan NISN siswa. Pastikan nama file foto = NISN (contoh: 0134829101.jpg).', 'warning');
+                }
+            } catch (err) {
+                console.error('Gagal ekstraksi ZIP:', err);
+                if (btnText) btnText.textContent = 'Unggah Arsip .zip';
+                showToast('Gagal memproses file .zip.', 'error');
+            }
+        }
+
+        // 10. PENGATURAN LOGO, IDENTITAS KELAS & DATA SIMULASI
+        function getDefaultAvatar(name, gender) {
+            const bg = gender === 'Perempuan' ? 'fce7f3' : 'e0e7ff';
+            const fg = gender === 'Perempuan' ? 'be185d' : '4338ca';
+            const initials = (name || 'S').split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase();
+            return `https://placehold.co/150x150/${bg}/${fg}?text=${encodeURIComponent(initials)}`;
+        }
+
+        function renderLogoElements(logoDataUrl) {
+            const boxes = [
+                document.getElementById('sidebar-logo-box'),
+                document.getElementById('mobile-logo-box'),
+                document.getElementById('settings-logo-preview')
+            ];
+            boxes.forEach(box => {
+                if (!box) return;
+                if (logoDataUrl) {
+                    box.innerHTML = `<img src="${logoDataUrl}" alt="Logo" class="w-full h-full object-contain">`;
+                } else {
+                    box.innerHTML = `<i data-lucide="qr-code" class="w-6 h-6"></i>`;
+                }
+            });
+            lucide.createIcons();
+        }
+
+        function handleLogoUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = async function() {
+                    const canvas = document.createElement('canvas');
+                    const maxSize = 160;
+                    let w = img.width;
+                    let h = img.height;
+                    if (w > h) {
+                        if (w > maxSize) { h *= maxSize / w; w = maxSize; }
+                    } else {
+                        if (h > maxSize) { w *= maxSize / h; h = maxSize; }
+                    }
+                    canvas.width = w;
+                    canvas.height = h;
+                    canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+
+                    const logoBase64 = canvas.toDataURL('image/png', 0.85);
+                    const updatedSettings = { ...window.appState.settings, customLogo: logoBase64 };
+                    await window.cloudSaveSettings(updatedSettings);
+                    showToast('Logo judul E-Absensi QR berhasil diperbarui!', 'success');
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        async function resetCustomLogo() {
+            const updatedSettings = { ...window.appState.settings, customLogo: '' };
+            await window.cloudSaveSettings(updatedSettings);
+            showToast('Logo dikembalikan ke ikon QR default.', 'success');
+        }
+
+        function applySettingsToUI() {
+            const s = window.appState.settings;
+            const sideInfo = document.getElementById('sidebar-class-info');
+            const mobInfo = document.getElementById('mobile-class-info');
+            const headDead = document.getElementById('header-deadline');
+            const banDead = document.getElementById('banner-deadline');
+
+            if (sideInfo) sideInfo.textContent = `${s.className} • ${s.schoolName}`;
+            if (mobInfo) mobInfo.textContent = `${s.className} • Batas ${s.deadlineTime}`;
+            if (headDead) headDead.textContent = s.deadlineTime;
+            if (banDead) banDead.textContent = s.deadlineTime;
+
+            renderLogoElements(s.customLogo);
+
+            const inpSchool = document.getElementById('setting-school');
+            const inpClass = document.getElementById('setting-class');
+            const inpDead = document.getElementById('setting-deadline');
+            const inpTeacher = document.getElementById('setting-teacher');
+            const inpVoice = document.getElementById('setting-voice');
+
+            if (inpSchool) inpSchool.value = s.schoolName || '';
+            if (inpClass) inpClass.value = s.className || '';
+            if (inpDead) inpDead.value = s.deadlineTime || '06:30';
+            if (inpTeacher) inpTeacher.value = s.teacherName || '';
+            if (inpVoice) inpVoice.checked = s.voiceEnabled !== false;
+        }
+
+        async function saveSettingsForm(e) {
+            e.preventDefault();
+            const newSettings = {
+                ...window.appState.settings,
+                schoolName: document.getElementById('setting-school').value.trim(),
+                className: document.getElementById('setting-class').value.trim(),
+                deadlineTime: document.getElementById('setting-deadline').value,
+                teacherName: document.getElementById('setting-teacher').value.trim(),
+                voiceEnabled: document.getElementById('setting-voice').checked
+            };
+            await window.cloudSaveSettings(newSettings);
+            showToast('Pengaturan kelas berhasil disimpan & disinkronkan!', 'success');
+        }
+
+        // Kontrol Modal Reset Sistem (Tahun Ajaran Baru)
+        function openResetSystemModal() {
+            const modal = document.getElementById('reset-system-modal');
+            const input = document.getElementById('reset-confirm-input');
+            const btn = document.getElementById('btn-execute-reset');
+            if (input) input.value = '';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Ya, Bersihkan Semua';
+            }
+            if (modal) modal.classList.remove('hidden');
+            lucide.createIcons();
+        }
+
+        function closeResetSystemModal() {
+            const modal = document.getElementById('reset-system-modal');
+            if (modal) modal.classList.add('hidden');
+        }
+
+        function validateResetInput() {
+            const input = document.getElementById('reset-confirm-input');
+            const btn = document.getElementById('btn-execute-reset');
+            if (!input || !btn) return;
+            btn.disabled = (input.value.trim().toUpperCase() !== 'RESET');
+        }
+
+        async function executeSystemReset() {
+            const btn = document.getElementById('btn-execute-reset');
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = 'Membersihkan Data...';
+            }
+            try {
+                await window.cloudResetAllData();
+                const emptyBox = document.getElementById('last-scan-empty');
+                const cardBox = document.getElementById('last-scan-card');
+                if (emptyBox) emptyBox.classList.remove('hidden');
+                if (cardBox) cardBox.classList.add('hidden');
+
+                closeResetSystemModal();
+                showToast('Sistem berhasil di-reset bersih! Siap untuk tahun ajaran baru.', 'success');
+            } catch (err) {
+                console.error('Gagal reset sistem:', err);
+                showToast('Terjadi kendala saat mereset data. Coba ulangi.', 'error');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = 'Ya, Bersihkan Semua';
+                }
+            }
+        }
+
+        function refreshAllViews() {
+            renderScanDashboard();
+            renderManualAttendance();
+            renderStudentsGrid();
+            renderRecapTable();
+        }
+
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            if (!container) return;
+
+            const colors = {
+                success: 'bg-slate-900 text-white border-emerald-500',
+                warning: 'bg-amber-600 text-white border-amber-300',
+                error: 'bg-rose-600 text-white border-rose-300'
+            };
+
+            const toast = document.createElement('div');
+            toast.className = `pointer-events-auto px-4 py-3 rounded-lg shadow-lg border-l-4 text-xs font-semibold flex items-center justify-between gap-3 transition-all duration-300 ${colors[type] || colors.success}`;
+            toast.innerHTML = `<span>${message}</span>`;
+
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateY(-10px)';
+                setTimeout(() => toast.remove(), 300);
+            }, 3500);
+        }
+
+        // Jalankan saat halaman selesai dimuat
+        window.addEventListener('DOMContentLoaded', () => {
+            injectSingleFilePwa();
+            initClockAndDates();
+            refreshAllViews();
+            lucide.createIcons();
+        });
+    </script>
+</body>
+</html>
